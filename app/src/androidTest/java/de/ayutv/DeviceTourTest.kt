@@ -1601,11 +1601,11 @@ class DeviceTourTest {
                 val (position, rendered, dropped) = dnaStats()
                 shot("99_dna_engine_4k")
                 log("dna_engine_4k: shown=$shown position_ms=$position advanced_ms=${position - p0} rendered=${rendered - r0} dropped=$dropped info=${dnaInfo()} ${engineInfo()}")
-                // Fernseher ohne 4K-HEVC-Decoder (Emulator): Der eigene Software-Decoder ist auf TV-Geräten bewusst aus
-                // (Stick hing sonst). Erwartet ist dann eine klare Meldung statt eines Bildes.
-                val tv = app.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
-                if (!shown && tv && "scheitern an" in dnaInfo()) {
-                    log("dna_engine_4k: TV-Gerät ohne 4K-Decoder – klare Meldung statt Bild")
+                // Gerät ohne 4K-HEVC-Decoder, auf dem der eigene Software-Decoder bewusst aus ist (Fernseher-Sticks und
+                // Geräte unter 2,5 GB Arbeitsspeicher, auch der Emulator): Erwartet ist eine klare Meldung statt eines Bildes.
+                val noSoft = !de.ayutv.player.dna.engine.DnaEngineCore.softVideoSupported("video/hevc")
+                if (!shown && noSoft && "scheitern an" in dnaInfo()) {
+                    log("dna_engine_4k: kein 4K-Decoder, Software-Decoder aus – klare Meldung statt Bild")
                     return@section
                 }
                 assertTrue("4K: kein Bild (${dnaInfo()})", shown)
@@ -1628,9 +1628,9 @@ class DeviceTourTest {
             log("uhd_selftest: done=$done result=$result")
             Thread.sleep(9_000)
             assertTrue("4K-Test ohne Ergebnis", done)
-            val tv = app.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
-            // TV ohne 4K-Decoder: ein klares „✗ … scheitern an …“ ist das richtige Ergebnis.
-            val clearNo = tv && result?.startsWith("✗") == true && "scheitern an" in result
+            // Ohne 4K-Decoder und ohne erlaubten Software-Decoder: ein klares „✗ … scheitern an …“ ist das richtige Ergebnis.
+            val noSoft = !de.ayutv.player.dna.engine.DnaEngineCore.softVideoSupported("video/hevc")
+            val clearNo = noSoft && result?.startsWith("✗") == true && "scheitern an" in result
             assertTrue("4K-Test: $result", result?.startsWith("✗") == false || clearNo)
         }
 

@@ -2394,7 +2394,9 @@ class DnaEngineCore(
                 lastPollNanos = now
                 if (track.getTimestamp(stamp) && stamp.nanoTime > resumedNanos) {
                     val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                    val plausible = !hadStamp || kotlin.math.abs(stamp.framePosition - head) * 1_000_000L / rate < 5_000_000L
+                    // Auch der erste: Eine vom vorigen Sender übernommene Tonausgabe (Durchreichen) meldet auf manchen
+                    // Geräten nach dem Leeren noch die alte Zahl gespielter Proben – die Uhr spränge Minuten nach vorn.
+                    val plausible = kotlin.math.abs(stamp.framePosition - head) * 1_000_000L / rate < 5_000_000L
                     if (plausible) {
                         hadStamp = true
                         stampFrames = stamp.framePosition
