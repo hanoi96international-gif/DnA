@@ -1918,6 +1918,22 @@ class DnaEngineCore(
             val notStartedYet = t != null && (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) == 0L
             return if (passthroughMode || (isTv && notStartedYet)) PASSTHROUGH_STALL_MS else OUTPUT_STALL_MS
         }
+        /**
+         * Tonausgabe spielen lassen und beim ersten Mal den Start melden (Puffern vorbei, Bild läuft mit). Nicht, solange
+         * angehalten ist oder nach dem Start der Vorrat leer war. Auch wenn die Tonausgabe schon spielt (von außen wieder
+         * gestartet): Der Start zählt, sobald der Ton tatsächlich schreibt.
+         */
+        fun ensurePlaying(t: AudioTrack) {
+            if (paused || (buffering && started)) return
+            if (t.playState != AudioTrack.PLAYSTATE_PLAYING) runCatching { t.play() }
+            if (playingSinceMs == 0L) playingSinceMs = SystemClock.elapsedRealtime()
+            if (!started) {
+                started = true
+                audioStarted = true
+                startMark("Ton läuft")
+                setBuffering(false)
+            }
+        }
         fun write(t: AudioTrack, data: ByteBuffer, ptsUs: Long, rate: Int) {
             if (firstPtsUs == Long.MIN_VALUE) {
                 firstPtsUs = ptsUs
@@ -1926,16 +1942,7 @@ class DnaEngineCore(
             }
             // Angehalten oder Vorrat leer: nicht weiter schreiben (AudioTrack ist pausiert).
             while ((paused || (buffering && started)) && alive(gen)) Thread.sleep(20)
-            if (t.playState != AudioTrack.PLAYSTATE_PLAYING && !paused) {
-                t.play()
-                if (playingSinceMs == 0L) playingSinceMs = SystemClock.elapsedRealtime()
-                if (!started) {
-                    started = true
-                    audioStarted = true
-                    startMark("Ton läuft")
-                    setBuffering(false)
-                }
-            }
+            ensurePlaying(t)
             pathOutputs++
             // Nicht blockierend schreiben: Eine Tonausgabe, die nichts annimmt (Durchreichen ohne Receiver), darf den
             // Ton nicht für immer festhalten – sie wird erkannt und der nächste Tonweg genommen.
@@ -1950,6 +1957,10 @@ class DnaEngineCore(
                     stalledSinceMs = 0L
                     continue
                 }
+                // Noch nicht gestartet, weil gerade angehalten war (Vorlauf der Übersetzung gleich nach dem Start): Sobald
+                // es weitergeht, hier starten. Früher schrieb der Ton dann ewig in eine stehende Tonausgabe – der Film
+                // blieb bei 0 stehen.
+                if (!started) ensurePlaying(t)
                 val now = SystemClock.elapsedRealtime()
                 if (t.playState == AudioTrack.PLAYSTATE_PLAYING && !paused && !buffering) {
                     if (stalledSinceMs == 0L) stalledSinceMs = now
