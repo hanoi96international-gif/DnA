@@ -212,6 +212,9 @@ class DnaEngineCore(
         streamKey = url
         stalls = if (live) synchronized(stallMemory) { stallMemory[url] ?: 0 } else 0
         highBitrate = false
+        resetStreamFps()
+        openedAtMs = SystemClock.elapsedRealtime()
+        startMarks.clear()
         rateBytes = 0
         rateFirstUs = Long.MIN_VALUE
         rateMeasured = false
@@ -396,6 +399,54 @@ class DnaEngineCore(
     private var rateBytes = 0L
     private var rateFirstUs = Long.MIN_VALUE
     @Volatile private var rateMeasured = false
+
+    // ---------------------------------------------------------------- Startzeit in Abschnitten (für den Kurzbericht)
+
+    @Volatile private var openedAtMs = 0L
+    private val startMarks = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /** Einmal je Stream: wie lange seit open() bis [what] (Verbindung, erste Daten, erstes Bild, Ton läuft). */
+    private fun startMark(what: String) {
+        val opened = openedAtMs
+        if (opened == 0L || !startMarks.add(what)) return
+        DnaLog.i(TAG, "Start: $what nach ${SystemClock.elapsedRealtime() - opened} ms")
+    }
+
+    /**
+     * Bildrate des Stroms aus den Zeitstempeln der Bilder (0 = noch unbekannt). Genauer als gezeigte Bilder zu zählen:
+     * Verworfene oder vor dem ersten Schlüsselbild übersprungene Bilder ließen 25 fps wie 24 aussehen – der Fernseher
+     * schaltete dann auf den falschen Modus oder blieb bei 60 Hz.
+     */
+    @Volatile var streamFrameRate = 0f
+        private set
+    private var fpsCount = 0
+    private var fpsMinUs = Long.MAX_VALUE
+    private var fpsMaxUs = Long.MIN_VALUE
+
+    private fun resetStreamFps() {
+        streamFrameRate = 0f
+        fpsCount = 0
+        fpsMinUs = Long.MAX_VALUE
+        fpsMaxUs = Long.MIN_VALUE
+    }
+
+    private fun noteStreamFps(timeUs: Long) {
+        if (streamFrameRate > 0f) return
+        // Sprung (Neuverbindung, Spulen): neu zählen.
+        if (fpsCount > 0 && (timeUs < fpsMinUs - 2_000_000 || timeUs > fpsMaxUs + 2_000_000)) resetStreamFps()
+        fpsCount++
+        fpsMinUs = minOf(fpsMinUs, timeUs)
+        fpsMaxUs = maxOf(fpsMaxUs, timeUs)
+        val span = fpsMaxUs - fpsMinUs
+        // Über mindestens 3 s (B-Bilder kommen umsortiert, die Spanne stimmt trotzdem).
+        if (fpsCount < 60 || span < 3_000_000) return
+        val fps = ((fpsCount - 1) * 1_000_000.0 / span).toFloat()
+        val rounded = listOf(23.976f, 24f, 25f, 29.97f, 30f, 48f, 50f, 59.94f, 60f).minBy { kotlin.math.abs(it - fps) }
+        if (kotlin.math.abs(rounded - fps) / rounded < 0.03f) {
+            streamFrameRate = rounded
+            DnaLog.i(TAG, "Bildrate des Stroms: ${"%.2f".format(fps)} → $rounded fps")
+        } else resetStreamFps()
+    }
 
     private fun noteVideoRate(sample: Sample) {
         if (rateMeasured) return
@@ -677,7 +728,11 @@ class DnaEngineCore(
                 audioTap?.let { tap -> runCatching { tap(sample) } }
             }
         }
-        if (track.codec.kind == Kind.VIDEO) noteVideoRate(sample)
+        if (track.codec.kind == Kind.VIDEO) {
+            if (sample.keyframe) startMark("erstes Schlüsselbild empfangen") else startMark("erste Bilddaten")
+            noteVideoRate(sample)
+            noteStreamFps(sample.timeUs)
+        }
         synchronized(lock) {
             if (track.codec.kind == Kind.VIDEO) videoQueue.addLast(sample) else audioQueue.addLast(sample)
             queuedBytes += sample.data.size
@@ -913,6 +968,10 @@ class DnaEngineCore(
         private val spare = ArrayDeque<NativeVideo.Frame>()
         /** Von der Anzeige verworfene (zu späte) Bilder, noch nicht beim Sparen berücksichtigt. */
         private val lateAtDisplay = java.util.concurrent.atomic.AtomicInteger()
+        /** Bilder als 10-Bit-Halbfließkomma für die HDR-Anzeige? null = noch nicht entschieden (erstes Bild). */
+        @Volatile private var halfOut: Boolean? = null
+        /** Display kann HDR10, und die Grafik kann eine BT.2020/PQ-Fläche anlegen. */
+        private val hdrCapable: Boolean = displayHdr10() && GlYuvRenderer.hdrAvailable
 
         // Sparstufe (nur auf dem Dekodier-Thread): 4K ab Stufe 1 (Entblockung nur bei Bildern ohne Bezug aus) –
         // so macht es VLC auf schnellen Handys immer, ohne sichtbaren Unterschied.
@@ -1022,7 +1081,12 @@ class DnaEngineCore(
                 decoder.drop()
                 return
             }
-            val frame = decoder.convert(target)
+            // HDR10 auf einem HDR-Display: 10 Bit als Halbfließkomma an die HDR-Anzeige (einmal je Strom entschieden).
+            if (halfOut == null) {
+                halfOut = hdrCapable && decoder.heldIsPq10()
+                if (halfOut == true) DnaLog.i(TAG, "FFmpeg-Software: HDR10 auf HDR-Display – Ausgabe als echtes HDR (10 Bit)")
+            }
+            val frame = if (halfOut == true) decoder.convertHalf(target) ?: decoder.convert(target) else decoder.convert(target)
             if (frame == null) {
                 if (target != null) synchronized(frameLock) { spare.addLast(target) }
                 return
@@ -1076,13 +1140,24 @@ class DnaEngineCore(
         private fun presentLoop() {
             var renderer: GlYuvRenderer? = null
             try {
+                // Erst das erste fertige Bild abwarten: Ob die Anzeige HDR (BT.2020/PQ, 10 Bit) oder SDR wird, steht erst
+                // dann fest.
+                synchronized(frameLock) { while (alive() && ready.isEmpty()) frameLock.wait(20) }
+                var hdr = synchronized(frameLock) { ready.firstOrNull()?.half == true }
                 // Die Bildfläche kann noch kurz am vorigen Decoder hängen (wird gerade freigegeben): dann meldet EGL
                 // „belegt“ (12291, EGL_BAD_ALLOC). Ein paar Mal kurz warten statt gleich mit Fehler abzubrechen.
                 var attempt = 0
                 while (renderer == null && alive()) {
                     try {
-                        renderer = GlYuvRenderer(surface)
+                        renderer = GlYuvRenderer(surface, hdr)
                     } catch (e: Exception) {
+                        // HDR-Fläche geht nicht (Grafik/Display): sofort SDR wie bisher (HDR → SDR umgerechnet).
+                        if (hdr && e.message?.contains("12291") != true) {
+                            DnaLog.w(TAG, "FFmpeg-Software: HDR-Anzeige nicht möglich (${e.message}) – SDR")
+                            hdr = false
+                            halfOut = false
+                            continue
+                        }
                         if (++attempt >= 15) {
                             DnaLog.w(TAG, "FFmpeg-Software: ${e.message}")
                             if (alive()) listener.onError("Bild lässt sich nicht anzeigen (${e.message})", fatal = true)
@@ -1098,7 +1173,10 @@ class DnaEngineCore(
                         ready.removeFirstOrNull()
                     } ?: continue
                     try {
-                        show(renderer ?: break, frame)
+                        val r = renderer ?: break
+                        // SDR-Anzeige (OpenGL ES 2) kann keine Halbfließkomma-Bilder: die wenigen vom Umschalten auslassen.
+                        if (frame.half && !r.hdr) continue
+                        show(r, frame)
                     } finally {
                         synchronized(frameLock) {
                             spare.addLast(frame)
@@ -1149,9 +1227,10 @@ class DnaEngineCore(
             renderedFrames++
             if (!firstFrameShown) {
                 firstFrameShown = true
-                DnaLog.i(TAG, "FFmpeg-Software: erstes Bild gezeigt (${frame.width}×${frame.height}, ${if (frame.transfer == 16) "HDR10 → SDR" else "SDR"})")
+                DnaLog.i(TAG, "FFmpeg-Software: erstes Bild gezeigt (${frame.width}×${frame.height}, ${if (frame.transfer == 16) (if (renderer.hdr) "echtes HDR10" else "HDR10 → SDR") else "SDR"})")
                 if (videoStartUs == Long.MIN_VALUE) videoStartUs = ptsUs
                 listener.onFirstFrame()
+                startMark("erstes Bild gezeigt")
                 if (!audioPlayable) setBuffering(false)
                 else awaitAudioStart(gen)
             }
@@ -1192,6 +1271,7 @@ class DnaEngineCore(
                 if (videoStartUs == Long.MIN_VALUE) videoStartUs = ptsUs
                 videoFailures = 0
                 listener.onFirstFrame()
+                startMark("erstes Bild gezeigt")
             }
         }
 
@@ -1611,6 +1691,7 @@ class DnaEngineCore(
                         rememberVariant(name, variant)
                         rememberHardware(softwareKey(config), failed = false)
                         listener.onFirstFrame()
+                        startMark("erstes Bild gezeigt")
                         if (!audioPlayable) setBuffering(false)
                         else awaitAudioStart(gen)
                     }
@@ -1769,6 +1850,7 @@ class DnaEngineCore(
                 if (!started) {
                     started = true
                     audioStarted = true
+                    startMark("Ton läuft")
                     setBuffering(false)
                 }
             }
@@ -2454,6 +2536,13 @@ class DnaEngineCore(
         }
 
         fun softVideoSupported(mime: String): Boolean = softVideoAllowed && NativeVideo.supports(mime)
+
+        /** Kann das eingebaute Display HDR10 zeigen (Handy mit HDR-Bildschirm)? */
+        private fun displayHdr10(): Boolean = runCatching {
+            val dm = appContext?.getSystemService(android.content.Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+            val types = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.hdrCapabilities?.supportedHdrTypes
+            types?.contains(android.view.Display.HdrCapabilities.HDR_TYPE_HDR10) == true
+        }.getOrDefault(false)
         /** Synchroner Decoder-Betrieb: so oft nachsehen, wenn gerade nichts zu tun war. */
         private const val SYNC_POLL_MS = 4L
         /** So lange darf ein Bild-Decoder nach dem ersten Schlüsselbild ohne Bild bleiben. */

@@ -58,6 +58,32 @@ JNIEXPORT jint JNICALL FN(nativeConvert)(JNIEnv *env, jclass cls, jlong handle, 
     return ret;
 }
 
+JNIEXPORT jint JNICALL FN(nativeConvertHalf)(JNIEnv *env, jclass cls, jlong handle, jobject y, jobject u, jobject v, jintArray info) {
+    (void)cls;
+    DnaVideo *dv = (DnaVideo *)(intptr_t)handle;
+    if (!dv || !info) return -1;
+    uint8_t *py = y ? (*env)->GetDirectBufferAddress(env, y) : NULL;
+    uint8_t *pu = u ? (*env)->GetDirectBufferAddress(env, u) : NULL;
+    uint8_t *pv = v ? (*env)->GetDirectBufferAddress(env, v) : NULL;
+    int y_cap = y ? (int)(*env)->GetDirectBufferCapacity(env, y) : 0;
+    int u_cap = u ? (int)(*env)->GetDirectBufferCapacity(env, u) : 0;
+    int v_cap = v ? (int)(*env)->GetDirectBufferCapacity(env, v) : 0;
+    int32_t out[5] = {0};
+    int ret = dna_video_convert_half(dv, py, y_cap, pu, pv, u_cap < v_cap ? u_cap : v_cap, out);
+    (*env)->SetIntArrayRegion(env, info, 0, 5, (const jint *)out);
+    return ret;
+}
+
+JNIEXPORT jint JNICALL FN(nativeHeldFormat)(JNIEnv *env, jclass cls, jlong handle, jintArray info) {
+    (void)cls;
+    DnaVideo *dv = (DnaVideo *)(intptr_t)handle;
+    if (!dv || !info) return 0;
+    int32_t out[3] = {0};
+    int ret = dna_video_held_format(dv, out);
+    (*env)->SetIntArrayRegion(env, info, 0, 3, (const jint *)out);
+    return ret;
+}
+
 JNIEXPORT void JNICALL FN(nativeDrop)(JNIEnv *env, jclass cls, jlong handle) {
     (void)env; (void)cls;
     dna_video_drop((DnaVideo *)(intptr_t)handle);

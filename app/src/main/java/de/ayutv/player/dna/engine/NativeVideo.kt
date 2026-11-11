@@ -29,6 +29,8 @@ internal object NativeVideo {
     const val HURRY_SEEK = 9
     /** Höchste Sparstufe für [Decoder.hurry]. */
     const val HURRY_MAX = 3
+    /** AVColorTransferCharacteristic: SMPTE ST 2084 (PQ, HDR10). */
+    const val TRC_PQ = 16
 
     /**
      * Ausgabe eines Bildes: Größe, Farbraum (AVColorSpace), Übertragung (AVColorTransferCharacteristic), Wertebereich.
@@ -38,6 +40,8 @@ internal object NativeVideo {
                 var y: ByteBuffer, var u: ByteBuffer, var v: ByteBuffer) {
         /** Darstellungszeit (µs), vom Aufrufer gesetzt. */
         var ptsUs: Long = 0L
+        /** Ebenen als Halbfließkomma (10 Bit für HDR, 2 Bytes je Wert) statt 8 Bit. */
+        var half: Boolean = false
     }
 
     class Decoder internal constructor(private var handle: Long) {
@@ -55,9 +59,9 @@ internal object NativeVideo {
          */
         fun convert(into: Frame? = null): Frame? {
             if (handle == 0L) return null
-            var y = into?.y ?: empty
-            var u = into?.u ?: empty
-            var v = into?.v ?: empty
+            var y = into?.takeIf { !it.half }?.y ?: empty
+            var u = into?.takeIf { !it.half }?.u ?: empty
+            var v = into?.takeIf { !it.half }?.v ?: empty
             var ret = nativeConvert(handle, y, u, v, info)
             if (ret == 0) {
                 val w = info[0]
@@ -78,6 +82,47 @@ internal object NativeVideo {
             frame.y = y
             frame.u = u
             frame.v = v
+            frame.half = false
+            return frame
+        }
+
+        /** Gehaltenes Bild ist 10 Bit mit PQ (HDR10)? */
+        fun heldIsPq10(): Boolean {
+            if (handle == 0L) return false
+            val f = IntArray(3)
+            return nativeHeldFormat(handle, f) == 1 && f[0] == 10 && f[2] == TRC_PQ
+        }
+
+        /**
+         * Wie [convert], aber 10 Bit als Halbfließkomma (für die HDR-Anzeige, ohne 8-Bit-Stufen). null, wenn das Bild
+         * dafür nicht passt (kein 10 Bit 4:2:0 in voller/halber Größe) oder bei Fehler.
+         */
+        fun convertHalf(into: Frame? = null): Frame? {
+            if (handle == 0L) return null
+            var y = into?.takeIf { it.half }?.y ?: empty
+            var u = into?.takeIf { it.half }?.u ?: empty
+            var v = into?.takeIf { it.half }?.v ?: empty
+            var ret = nativeConvertHalf(handle, y, u, v, info)
+            if (ret == 0) {
+                val w = info[0]
+                val h = info[1]
+                y = ByteBuffer.allocateDirect(w * h * 2)
+                u = ByteBuffer.allocateDirect((w / 2) * (h / 2) * 2)
+                v = ByteBuffer.allocateDirect((w / 2) * (h / 2) * 2)
+                ret = nativeConvertHalf(handle, y, u, v, info)
+            }
+            if (ret != 1) return null
+            y.position(0); u.position(0); v.position(0)
+            val frame = into ?: Frame(0, 0, 0, 0, false, y, u, v)
+            frame.width = info[0]
+            frame.height = info[1]
+            frame.colorSpace = info[2]
+            frame.transfer = info[3]
+            frame.fullRange = info[4] == 1
+            frame.y = y
+            frame.u = u
+            frame.v = v
+            frame.half = true
             return frame
         }
 
@@ -106,6 +151,8 @@ internal object NativeVideo {
     @JvmStatic private external fun nativeSend(handle: Long, data: ByteArray, len: Int, pts: Long): Int
     @JvmStatic private external fun nativeReceive(handle: Long): Long
     @JvmStatic private external fun nativeConvert(handle: Long, y: ByteBuffer, u: ByteBuffer, v: ByteBuffer, info: IntArray): Int
+    @JvmStatic private external fun nativeConvertHalf(handle: Long, y: ByteBuffer, u: ByteBuffer, v: ByteBuffer, info: IntArray): Int
+    @JvmStatic private external fun nativeHeldFormat(handle: Long, info: IntArray): Int
     @JvmStatic private external fun nativeDrop(handle: Long)
     @JvmStatic private external fun nativeHurry(handle: Long, level: Int)
     @JvmStatic private external fun nativeFlush(handle: Long)

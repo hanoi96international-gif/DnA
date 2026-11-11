@@ -216,6 +216,8 @@ class DnaEnginePlayer(
 
     val droppedFrames: Int get() = core.droppedFrames
     val renderedFrames: Int get() = core.renderedFrames
+    /** Bildrate des Stroms aus den Zeitstempeln (0 = noch unbekannt). */
+    val streamFrameRate: Float get() = core.streamFrameRate
     /** Laufender Bild-Decoder (Anzeige, Fehlerbericht). */
     val videoDecoderName: String? get() = core.videoDecoderName
     /** Ton geht an Receiver/Soundbar (nicht im Gerät dekodiert). */

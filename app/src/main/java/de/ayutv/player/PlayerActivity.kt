@@ -901,6 +901,14 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun estimateFrameRate(p: Player) {
         if (stats.frameRate > 0f || p.playbackState != Player.STATE_READY || !p.isPlaying) return
+        // DNA Engine: Bildrate aus den Zeitstempeln des Stroms (zählt auch verworfene/übersprungene Bilder richtig).
+        (p as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.streamFrameRate?.takeIf { it > 0f }?.let { fromStream ->
+            stats = stats.copy(frameRate = fromStream, frameRateMeasured = true, displayHz = frameRateMatcher.currentRefreshRate())
+            memoryKey()?.let { container.playerMemory.rememberFrameRate(it, fromStream, isLive) }
+            suggestFrameRateMatching()
+            if (settings.matchFrameRate) frameRateMatcher.match(fromStream)
+            return
+        }
         val frames = (p as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.let { (it.renderedFrames + it.droppedFrames).toLong() } ?: return
         // Gegen die Wiedergabeposition messen (Frames pro Sekunde Video), nicht gegen die Uhr:
         // so stört es nicht, wenn der Decoder anfangs gepufferte Frames schubweise abarbeitet.
@@ -5315,6 +5323,15 @@ class PlayerActivity : ComponentActivity() {
                 return
             }
             Log.w(TAG, "Wiedergabefehler ${error.errorCodeName}", error)
+            // 4K-Test: Ein Fehler ist auch ein Ergebnis („kann hier kein 4K“) – sonst wartete der Test ewig auf das Ende.
+            if (!isLive && UhdSelfTest.isTest(vod?.key)) {
+                val text = "✗ 4K läuft hier nicht (${error.message ?: error.errorCodeName})"
+                UhdSelfTest.save(this@PlayerActivity, text)
+                statusHistory += "4K-Test: $text"
+                message = text
+                handler.postDelayed({ if (!isFinishing) finish() }, 8_000)
+                return
+            }
             playerErrors++
             if (isLive && error.isVideoDecoderError()) playing?.let { decoderFailedChannel = it }
             // Für den Fehlerbericht: welcher Fehler, mit der eigentlichen Ursache.

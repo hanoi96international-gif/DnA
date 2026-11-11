@@ -190,6 +190,103 @@ int dna_video_convert(DnaVideo *v, uint8_t *y, int y_cap, uint8_t *u, uint8_t *v
     return 1;
 }
 
+/* ---------------------------------------------------------------- HDR: 10 Bit als Halbfließkomma (GPU-Textur R16F) */
+
+static uint16_t half_of[1024];
+static int half_ready = 0;
+
+/* float (0..1) → IEEE 754 binary16 (genug für 10-Bit-Werte, ohne Sonderfälle). */
+static uint16_t to_half(float f) {
+    if (f <= 0.0f) return 0;
+    union { float f; uint32_t u; } in = {f};
+    uint32_t sign = (in.u >> 16) & 0x8000;
+    int32_t exp = (int32_t)((in.u >> 23) & 0xFF) - 127 + 15;
+    uint32_t mant = in.u & 0x7FFFFF;
+    if (exp <= 0) {
+        if (exp < -10) return (uint16_t)sign;
+        mant |= 0x800000;
+        uint32_t shift = (uint32_t)(14 - exp);
+        uint32_t value = mant >> shift;
+        if ((mant >> (shift - 1)) & 1) value++;
+        return (uint16_t)(sign | value);
+    }
+    if (exp >= 31) return (uint16_t)(sign | 0x7BFF);
+    uint32_t value = sign | ((uint32_t)exp << 10) | (mant >> 13);
+    if (mant & 0x1000) value++;
+    return (uint16_t)value;
+}
+
+static void init_half(void) {
+    if (half_ready) return;
+    for (int i = 0; i < 1024; i++) half_of[i] = to_half((float)i / 1023.0f);
+    half_ready = 1;
+}
+
+static void halve_plane_half(const uint8_t *src, int src_stride, uint16_t *dst, int ow, int oh) {
+    for (int r = 0; r < oh; r++) {
+        const uint16_t *s0 = (const uint16_t *)(src + (size_t)(2 * r) * src_stride);
+        const uint16_t *s1 = (const uint16_t *)(src + (size_t)(2 * r + 1) * src_stride);
+        uint16_t *d = dst + (size_t)r * ow;
+        for (int x = 0; x < ow; x++) {
+            unsigned val = ((unsigned)s0[2 * x] + s0[2 * x + 1] + s1[2 * x] + s1[2 * x + 1] + 2) >> 2;
+            d[x] = half_of[val > 1023 ? 1023 : val];
+        }
+    }
+}
+
+static void copy_plane_half(const uint8_t *src, int src_stride, uint16_t *dst, int ow, int oh) {
+    for (int r = 0; r < oh; r++) {
+        const uint16_t *s = (const uint16_t *)(src + (size_t)r * src_stride);
+        uint16_t *d = dst + (size_t)r * ow;
+        for (int x = 0; x < ow; x++) {
+            unsigned val = s[x];
+            d[x] = half_of[val > 1023 ? 1023 : val];
+        }
+    }
+}
+
+int dna_video_held_format(DnaVideo *v, int32_t *info) {
+    if (!v || !v->held || !info) return 0;
+    AVFrame *f = v->frame;
+    info[0] = f->format == AV_PIX_FMT_YUV420P10LE ? 10 : 8;
+    info[1] = f->colorspace;
+    info[2] = f->color_trc;
+    return 1;
+}
+
+int dna_video_convert_half(DnaVideo *v, uint8_t *y, int y_cap, uint8_t *u, uint8_t *vv, int uv_cap, int32_t *info) {
+    if (!v || !v->held || !info) return -1;
+    AVFrame *f = v->frame;
+    if (f->format != AV_PIX_FMT_YUV420P10LE) return -2;
+    int w = f->width, h = f->height;
+    int ow, oh;
+    fit(v, w, h, &ow, &oh);
+    int halve = (w / 2 == ow && h / 2 == oh);
+    int same = (w == ow && h == oh);
+    if (!halve && !same) return -2;
+    info[0] = ow;
+    info[1] = oh;
+    info[2] = f->colorspace;
+    info[3] = f->color_trc;
+    info[4] = f->color_range == AVCOL_RANGE_JPEG ? 1 : 0;
+    int cw = ow / 2, ch = oh / 2;
+    if (!y || !u || !vv || y_cap < ow * oh * 2 || uv_cap < cw * ch * 2) return 0;
+    init_half();
+    if (halve) {
+        halve_plane_half(f->data[0], f->linesize[0], (uint16_t *)y, ow, oh);
+        halve_plane_half(f->data[1], f->linesize[1], (uint16_t *)u, cw, ch);
+        halve_plane_half(f->data[2], f->linesize[2], (uint16_t *)vv, cw, ch);
+    } else {
+        copy_plane_half(f->data[0], f->linesize[0], (uint16_t *)y, ow, oh);
+        copy_plane_half(f->data[1], f->linesize[1], (uint16_t *)u, cw, ch);
+        copy_plane_half(f->data[2], f->linesize[2], (uint16_t *)vv, cw, ch);
+    }
+    dna_video_drop(v);
+    v->out_w = ow;
+    v->out_h = oh;
+    return 1;
+}
+
 void dna_video_hurry(DnaVideo *v, int level) {
     if (!v) return;
     // 1: Entblockung/SAO nur bei Bildern ohne Bezug aus (wie VLC auf schnellen Handys – ohne sichtbare Folgen),

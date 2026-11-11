@@ -33,6 +33,15 @@ int dna_video_receive(DnaVideo *v, int64_t *pts);
  */
 int dna_video_convert(DnaVideo *v, uint8_t *y, int y_cap, uint8_t *u, uint8_t *vv, int uv_cap, int32_t *info);
 
+/**
+ * Wie dna_video_convert, aber für HDR: 10-Bit-Werte (÷1023) als Halbfließkomma (2 Bytes je Wert), ohne 8-Bit-Stufen.
+ * Nur für 10 Bit 4:2:0 in voller oder halber Größe; sonst -2 (dann dna_video_convert nehmen).
+ */
+int dna_video_convert_half(DnaVideo *v, uint8_t *y, int y_cap, uint8_t *u, uint8_t *vv, int uv_cap, int32_t *info);
+
+/** Art des gehaltenen Bildes ohne Umrechnen: info[0] = Bittiefe (8/10), info[1] = Farbraum, info[2] = Übertragung. */
+int dna_video_held_format(DnaVideo *v, int32_t *info);
+
 /** Gehaltenes Bild verwerfen (zu spät). */
 void dna_video_drop(DnaVideo *v);
 

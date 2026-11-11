@@ -7,6 +7,7 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES20
+import android.opengl.GLES30
 import android.view.Surface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -21,7 +22,7 @@ import java.nio.FloatBuffer
  * Über EGL statt direkt in die Fläche schreiben: EGL gibt die Fläche beim Freigeben wieder ab, danach kann ein
  * Hardware-Decoder sie wieder nutzen (nächster Sender). Alle Aufrufe auf einem Thread (dem des Software-Decoders).
  */
-internal class GlYuvRenderer(output: Surface) {
+internal class GlYuvRenderer(output: Surface, val hdr: Boolean = false) {
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var context: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
@@ -29,6 +30,7 @@ internal class GlYuvRenderer(output: Surface) {
     private val textures = IntArray(3)
     private var texW = 0
     private var texH = 0
+    private var texHalf = false
     private var aPos = 0
     private var uMatrix = 0
     private var uOffset = 0
@@ -51,7 +53,14 @@ internal class GlYuvRenderer(output: Surface) {
         check(display != EGL14.EGL_NO_DISPLAY) { "kein EGL-Display" }
         val version = IntArray(2)
         check(EGL14.eglInitialize(display, version, 0, version, 1)) { "eglInitialize" }
-        val attribs = intArrayOf(
+        // HDR: 10 Bit je Farbe, OpenGL ES 3 (Halbfließkomma-Texturen) und eine Fläche in BT.2020/PQ – das System gibt
+        // sie dann als HDR10 an das Display. Sonst 8 Bit SDR wie bisher.
+        if (hdr) check(hasHdrExtension(display)) { "EGL ohne BT.2020/PQ" }
+        val attribs = if (hdr) intArrayOf(
+            EGL14.EGL_RED_SIZE, 10, EGL14.EGL_GREEN_SIZE, 10, EGL14.EGL_BLUE_SIZE, 10, EGL14.EGL_ALPHA_SIZE, 2,
+            EGL14.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
+            EGL14.EGL_NONE,
+        ) else intArrayOf(
             EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8,
             EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
             EGL14.EGL_NONE,
@@ -60,9 +69,10 @@ internal class GlYuvRenderer(output: Surface) {
         val count = IntArray(1)
         check(EGL14.eglChooseConfig(display, attribs, 0, configs, 0, 1, count, 0) && count[0] > 0) { "kein EGL-Format" }
         val config = configs[0]!!
-        context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE), 0)
+        context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, if (hdr) 3 else 2, EGL14.EGL_NONE), 0)
         check(context != EGL14.EGL_NO_CONTEXT) { "eglCreateContext" }
-        eglSurface = EGL14.eglCreateWindowSurface(display, config, output, intArrayOf(EGL14.EGL_NONE), 0)
+        val surfaceAttribs = if (hdr) intArrayOf(EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_BT2020_PQ_EXT, EGL14.EGL_NONE) else intArrayOf(EGL14.EGL_NONE)
+        eglSurface = EGL14.eglCreateWindowSurface(display, config, output, surfaceAttribs, 0)
         check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface ${EGL14.eglGetError()}" }
         check(EGL14.eglMakeCurrent(display, eglSurface, eglSurface, context)) { "eglMakeCurrent" }
 
@@ -98,7 +108,12 @@ internal class GlYuvRenderer(output: Surface) {
             val ph = if (k == 0) h else h / 2
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + k)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textures[k])
-            if (w != texW || h != texH) {
+            val realloc = w != texW || h != texH || frame.half != texHalf
+            if (frame.half) {
+                // 10 Bit als Halbfließkomma (nur im HDR-Kontext, OpenGL ES 3): keine 8-Bit-Stufen in Verläufen.
+                if (realloc) GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES30.GL_R16F, pw, ph, 0, GLES30.GL_RED, GLES30.GL_HALF_FLOAT, planes[k])
+                else GLES30.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, pw, ph, GLES30.GL_RED, GLES30.GL_HALF_FLOAT, planes[k])
+            } else if (realloc) {
                 GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, pw, ph, 0, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, planes[k])
             } else {
                 GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, pw, ph, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, planes[k])
@@ -106,6 +121,7 @@ internal class GlYuvRenderer(output: Surface) {
         }
         texW = w
         texH = h
+        texHalf = frame.half
         val sw = IntArray(1)
         val sh = IntArray(1)
         EGL14.eglQuerySurface(display, eglSurface, EGL14.EGL_WIDTH, sw, 0)
@@ -114,8 +130,10 @@ internal class GlYuvRenderer(output: Surface) {
         GLES20.glUseProgram(program)
         GLES20.glUniformMatrix3fv(uMatrix, 1, false, matrix(frame), 0)
         GLES20.glUniform3fv(uOffset, 1, offset(frame), 0)
-        // 0 = SDR, 1 = PQ (HDR10) → SDR, 2 = BT.2020-Farben (HLG/SDR in BT.2020) → BT.709.
+        // 0 = SDR, 1 = PQ (HDR10) → SDR, 2 = BT.2020-Farben (HLG/SDR in BT.2020) → BT.709, 3 = HDR10 unverändert
+        // (Fläche ist BT.2020/PQ, das Display zeigt echtes HDR).
         val mode = when {
+            hdr && frame.transfer == TRC_PQ -> 3
             frame.transfer == TRC_PQ -> 1
             frame.colorSpace == CS_BT2020_NCL || frame.colorSpace == CS_BT2020_CL || frame.transfer == TRC_HLG -> 2
             else -> 0
@@ -138,8 +156,9 @@ internal class GlYuvRenderer(output: Surface) {
             else -> if (frame.height < 600) 0.299f to 0.114f else 0.2126f to 0.0722f
         }
         val kg = 1f - kr - kb
-        val ys = if (frame.fullRange) 1f else 255f / 219f
-        val cs = if (frame.fullRange) 1f else 255f / 224f
+        // Begrenzter Wertebereich: 8 Bit 16–235/240, 10 Bit (Halbfließkomma, ÷1023) 64–940/960.
+        val ys = if (frame.fullRange) 1f else if (frame.half) 1023f / 876f else 255f / 219f
+        val cs = if (frame.fullRange) 1f else if (frame.half) 1023f / 896f else 255f / 224f
         val rv = 2f * (1f - kr) * cs
         val bu = 2f * (1f - kb) * cs
         val gu = -2f * kb * (1f - kb) / kg * cs
@@ -148,8 +167,11 @@ internal class GlYuvRenderer(output: Surface) {
         return floatArrayOf(ys, ys, ys, 0f, gu, bu, rv, gv, 0f)
     }
 
-    private fun offset(frame: NativeVideo.Frame): FloatArray =
-        if (frame.fullRange) floatArrayOf(0f, 0.5f, 0.5f) else floatArrayOf(16f / 255f, 0.5f, 0.5f)
+    private fun offset(frame: NativeVideo.Frame): FloatArray = when {
+        frame.half -> floatArrayOf(if (frame.fullRange) 0f else 64f / 1023f, 512f / 1023f, 512f / 1023f)
+        frame.fullRange -> floatArrayOf(0f, 0.5f, 0.5f)
+        else -> floatArrayOf(16f / 255f, 0.5f, 0.5f)
+    }
 
     fun release() {
         if (released) return
@@ -184,17 +206,33 @@ internal class GlYuvRenderer(output: Surface) {
         return p
     }
 
-    private companion object {
-        // AVColorSpace / AVColorTransferCharacteristic (FFmpeg).
-        const val CS_BT709 = 1
-        const val CS_BT470BG = 5
-        const val CS_SMPTE170M = 6
-        const val CS_BT2020_NCL = 9
-        const val CS_BT2020_CL = 10
-        const val TRC_PQ = 16
-        const val TRC_HLG = 18
+    companion object {
+        private const val EGL_OPENGL_ES3_BIT = 0x40
+        private const val EGL_GL_COLORSPACE_KHR = 0x309D
+        private const val EGL_GL_COLORSPACE_BT2020_PQ_EXT = 0x3340
 
-        const val VERTEX = """
+        private fun hasHdrExtension(display: EGLDisplay): Boolean =
+            EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS)?.contains("EGL_EXT_gl_colorspace_bt2020_pq") == true
+
+        /** Kann die Grafik eine HDR10-Fläche (BT.2020/PQ) anlegen? Einmal geprüft. */
+        val hdrAvailable: Boolean by lazy {
+            runCatching {
+                val d = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+                val v = IntArray(2)
+                d != EGL14.EGL_NO_DISPLAY && EGL14.eglInitialize(d, v, 0, v, 1) && hasHdrExtension(d)
+            }.getOrDefault(false)
+        }
+
+        // AVColorSpace / AVColorTransferCharacteristic (FFmpeg).
+        private const val CS_BT709 = 1
+        private const val CS_BT470BG = 5
+        private const val CS_SMPTE170M = 6
+        private const val CS_BT2020_NCL = 9
+        private const val CS_BT2020_CL = 10
+        private const val TRC_PQ = 16
+        private const val TRC_HLG = 18
+
+        private const val VERTEX = """
 attribute vec2 aPos;
 varying vec2 vPos;
 void main() {
@@ -207,7 +245,7 @@ void main() {
          * PQ → SDR: PQ-Kennlinie in Licht (1.0 = 10 000 nits), SDR-Weiß bei 203 nits, Spitzen weich abgerundet
          * (erweiterter Reinhard, ausgelegt auf 1000 nits), BT.2020 → BT.709, Gamma 2.2.
          */
-        const val FRAGMENT = """
+        private const val FRAGMENT = """
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
 #else
@@ -235,6 +273,8 @@ void main() {
         float w = 1000.0 / 203.0;
         l = l * (1.0 + l / (w * w)) / (1.0 + l);
         rgb = pow(clamp(l, 0.0, 1.0), vec3(1.0 / 2.2));
+    } else if (uMode == 3) {
+        // HDR10: Werte sind schon PQ-kodiert in BT.2020 – genau so auf die PQ-Fläche.
     } else if (uMode == 2) {
         vec3 l = pow(rgb, vec3(2.2));
         rgb = pow(clamp(TO709 * l, 0.0, 1.0), vec3(1.0 / 2.2));
