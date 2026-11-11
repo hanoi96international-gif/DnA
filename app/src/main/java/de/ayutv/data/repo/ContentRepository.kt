@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
@@ -61,7 +62,9 @@ class ContentRepository(
     val vodCategories = db.vod().observeCategories()
     val seriesCategories = db.series().observeCategories()
     /** Angefangene Filme und je Serie die zuletzt geschaute Folge ([ContinueWatching]). */
+    // Auswahl aus bis zu 400 Einträgen abseits der Oberfläche (sonst lief sie im Sammler auf dem Hauptthread).
     val continueWatching = db.history().observeRecentVod(400).map { ContinueWatching.select(it, 20) }
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
     val recentLive = db.history().observeRecentLive(20)
     val recentMovies = db.vod().observeRecent(30)
     val recentSeries = db.series().observeRecent(30)
