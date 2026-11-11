@@ -67,6 +67,30 @@ object UiPerformance {
             return "$total Bilder, über ${SLOW_MS} ms: ${share(slow.get())}, über ${VERY_SLOW_MS} ms: ${share(verySlow.get())}, längstes ${worstMs.get()} ms"
         }
     }
+    /**
+     * Woran langsame Bilder (über [SLOW_MS]) ihre Zeit verlieren, aufsummiert in µs: Eingabe/Animation, Aufbau und
+     * Anordnung (Compose), Zeichenbefehle erzeugen, an die Grafik übergeben und die Grafik selbst. So zeigt der
+     * Kurzbericht, ob die App zu viel rechnet oder der Grafikchip am Limit ist.
+     */
+    private object SlowParts {
+        val frames = AtomicLong()
+        val input = AtomicLong()
+        val layout = AtomicLong()
+        val draw = AtomicLong()
+        val sync = AtomicLong()
+        val gpu = AtomicLong()
+        val total = AtomicLong()
+        val waiting = AtomicLong()
+        fun text(): String? {
+            val n = frames.get().takeIf { it > 0 } ?: return null
+            fun ms(v: AtomicLong) = String.format(java.util.Locale.GERMAN, "%.1f", v.get() / 1000.0 / n)
+            return "langsame Bilder im Mittel: vorher belegt (Hauptthread) ${ms(waiting)} ms, Eingabe/Animation ${ms(input)} ms, Aufbau/Anordnung ${ms(layout)} ms, " +
+                "Zeichnen ${ms(draw)} ms, Übergabe ${ms(sync)} ms" +
+                (if (gpu.get() > 0) ", Grafikchip ${ms(gpu)} ms" else "") +
+                ", Rest (Warten auf Grafik/Bildschirm) " + String.format(java.util.Locale.GERMAN, "%.1f",
+                    (total.get() - waiting.get() - input.get() - layout.get() - draw.get() - sync.get()).coerceAtLeast(0) / 1000.0 / n) + " ms"
+        }
+    }
     private val calm = Counter()
     private val loading = Counter()
     /** Je Bereich (Start, Live TV, TV-Guide …) eigene Zählung: zeigt im Gerätecheck, wo es ruckelt. */
@@ -90,6 +114,17 @@ object UiPerformance {
             val ms = metrics.getMetric(FrameMetrics.TOTAL_DURATION) / 1_000_000
             val busyNow = runCatching { busy() }.getOrDefault(false)
             (if (busyNow) loading else calm).add(ms)
+            if (!busyNow && ms > SLOW_MS) {
+                fun part(id: Int) = runCatching { metrics.getMetric(id) / 1000 }.getOrDefault(0L)
+                SlowParts.frames.incrementAndGet()
+                SlowParts.total.addAndGet(part(FrameMetrics.TOTAL_DURATION))
+                SlowParts.waiting.addAndGet(part(FrameMetrics.UNKNOWN_DELAY_DURATION))
+                SlowParts.input.addAndGet(part(FrameMetrics.INPUT_HANDLING_DURATION) + part(FrameMetrics.ANIMATION_DURATION))
+                SlowParts.layout.addAndGet(part(FrameMetrics.LAYOUT_MEASURE_DURATION))
+                SlowParts.draw.addAndGet(part(FrameMetrics.DRAW_DURATION))
+                SlowParts.sync.addAndGet(part(FrameMetrics.SYNC_DURATION) + part(FrameMetrics.COMMAND_ISSUE_DURATION) + part(FrameMetrics.SWAP_BUFFERS_DURATION))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) SlowParts.gpu.addAndGet(part(FrameMetrics.GPU_DURATION))
+            }
             if (!busyNow && section.isNotEmpty()) bySection.getOrPut(section) { Counter() }.add(ms)
         }
         runCatching { window.addOnFrameMetricsAvailableListener(listener, handler) }.onSuccess { listeners[window] = listener }
@@ -116,7 +151,7 @@ object UiPerformance {
                 "$name " + String.format(java.util.Locale.GERMAN, "%.0f %%", c.slow.get() * 100.0 / c.frames.get()) + " über ${SLOW_MS} ms"
             }
         return parts.joinToString(" · ") + (if (worst.isNotEmpty()) " · am langsamsten: $worst" else "") +
-            if (reduced) " (weniger Bewegung aktiv)" else ""
+            (if (reduced) " (weniger Bewegung aktiv)" else "") + (SlowParts.text()?.let { " · $it" } ?: "")
     }
 
     private const val SLOW_MS = 25L
