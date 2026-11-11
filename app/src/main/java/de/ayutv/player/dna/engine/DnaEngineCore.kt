@@ -968,6 +968,10 @@ class DnaEngineCore(
         private val spare = ArrayDeque<NativeVideo.Frame>()
         /** Von der Anzeige verworfene (zu späte) Bilder, noch nicht beim Sparen berücksichtigt. */
         private val lateAtDisplay = java.util.concurrent.atomic.AtomicInteger()
+        /** Bilder als 10-Bit-Halbfließkomma für die HDR-Anzeige? null = noch nicht entschieden (erstes Bild). */
+        @Volatile private var halfOut: Boolean? = null
+        /** Display kann HDR10, und die Grafik kann eine BT.2020/PQ-Fläche anlegen. */
+        private val hdrCapable: Boolean = displayHdr10() && GlYuvRenderer.hdrAvailable
 
         // Sparstufe (nur auf dem Dekodier-Thread): 4K ab Stufe 1 (Entblockung nur bei Bildern ohne Bezug aus) –
         // so macht es VLC auf schnellen Handys immer, ohne sichtbaren Unterschied.
@@ -1077,7 +1081,12 @@ class DnaEngineCore(
                 decoder.drop()
                 return
             }
-            val frame = decoder.convert(target)
+            // HDR10 auf einem HDR-Display: 10 Bit als Halbfließkomma an die HDR-Anzeige (einmal je Strom entschieden).
+            if (halfOut == null) {
+                halfOut = hdrCapable && decoder.heldIsPq10()
+                if (halfOut == true) DnaLog.i(TAG, "FFmpeg-Software: HDR10 auf HDR-Display – Ausgabe als echtes HDR (10 Bit)")
+            }
+            val frame = if (halfOut == true) decoder.convertHalf(target) ?: decoder.convert(target) else decoder.convert(target)
             if (frame == null) {
                 if (target != null) synchronized(frameLock) { spare.addLast(target) }
                 return
@@ -1131,13 +1140,24 @@ class DnaEngineCore(
         private fun presentLoop() {
             var renderer: GlYuvRenderer? = null
             try {
+                // Erst das erste fertige Bild abwarten: Ob die Anzeige HDR (BT.2020/PQ, 10 Bit) oder SDR wird, steht erst
+                // dann fest.
+                synchronized(frameLock) { while (alive() && ready.isEmpty()) frameLock.wait(20) }
+                var hdr = synchronized(frameLock) { ready.firstOrNull()?.half == true }
                 // Die Bildfläche kann noch kurz am vorigen Decoder hängen (wird gerade freigegeben): dann meldet EGL
                 // „belegt“ (12291, EGL_BAD_ALLOC). Ein paar Mal kurz warten statt gleich mit Fehler abzubrechen.
                 var attempt = 0
                 while (renderer == null && alive()) {
                     try {
-                        renderer = GlYuvRenderer(surface)
+                        renderer = GlYuvRenderer(surface, hdr)
                     } catch (e: Exception) {
+                        // HDR-Fläche geht nicht (Grafik/Display): sofort SDR wie bisher (HDR → SDR umgerechnet).
+                        if (hdr && e.message?.contains("12291") != true) {
+                            DnaLog.w(TAG, "FFmpeg-Software: HDR-Anzeige nicht möglich (${e.message}) – SDR")
+                            hdr = false
+                            halfOut = false
+                            continue
+                        }
                         if (++attempt >= 15) {
                             DnaLog.w(TAG, "FFmpeg-Software: ${e.message}")
                             if (alive()) listener.onError("Bild lässt sich nicht anzeigen (${e.message})", fatal = true)
@@ -1153,7 +1173,10 @@ class DnaEngineCore(
                         ready.removeFirstOrNull()
                     } ?: continue
                     try {
-                        show(renderer ?: break, frame)
+                        val r = renderer ?: break
+                        // SDR-Anzeige (OpenGL ES 2) kann keine Halbfließkomma-Bilder: die wenigen vom Umschalten auslassen.
+                        if (frame.half && !r.hdr) continue
+                        show(r, frame)
                     } finally {
                         synchronized(frameLock) {
                             spare.addLast(frame)
@@ -1204,7 +1227,7 @@ class DnaEngineCore(
             renderedFrames++
             if (!firstFrameShown) {
                 firstFrameShown = true
-                DnaLog.i(TAG, "FFmpeg-Software: erstes Bild gezeigt (${frame.width}×${frame.height}, ${if (frame.transfer == 16) "HDR10 → SDR" else "SDR"})")
+                DnaLog.i(TAG, "FFmpeg-Software: erstes Bild gezeigt (${frame.width}×${frame.height}, ${if (frame.transfer == 16) (if (renderer.hdr) "echtes HDR10" else "HDR10 → SDR") else "SDR"})")
                 if (videoStartUs == Long.MIN_VALUE) videoStartUs = ptsUs
                 listener.onFirstFrame()
                 startMark("erstes Bild gezeigt")
@@ -2513,6 +2536,13 @@ class DnaEngineCore(
         }
 
         fun softVideoSupported(mime: String): Boolean = softVideoAllowed && NativeVideo.supports(mime)
+
+        /** Kann das eingebaute Display HDR10 zeigen (Handy mit HDR-Bildschirm)? */
+        private fun displayHdr10(): Boolean = runCatching {
+            val dm = appContext?.getSystemService(android.content.Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+            val types = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.hdrCapabilities?.supportedHdrTypes
+            types?.contains(android.view.Display.HdrCapabilities.HDR_TYPE_HDR10) == true
+        }.getOrDefault(false)
         /** Synchroner Decoder-Betrieb: so oft nachsehen, wenn gerade nichts zu tun war. */
         private const val SYNC_POLL_MS = 4L
         /** So lange darf ein Bild-Decoder nach dem ersten Schlüsselbild ohne Bild bleiben. */
