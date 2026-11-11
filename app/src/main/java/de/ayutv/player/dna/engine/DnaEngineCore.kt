@@ -271,7 +271,9 @@ class DnaEngineCore(
         videoThread = HandlerThread("dna-video").apply { start() }
         videoHandler = Handler(videoThread!!.looper)
         source.start(gen, startUs, first) { what, block -> safely(what, block) }
-        audioThread = thread(name = "dna-audio", isDaemon = true) { safely("Ton") { audioLoop(gen) } }
+        audioPhase = "startet"
+        val previous = previousAudioThread
+        audioThread = thread(name = "dna-audio", isDaemon = true) { safely("Ton") { audioLoop(gen, previous) } }
         processorNextUs = Long.MIN_VALUE
     }
 
@@ -583,6 +585,7 @@ class DnaEngineCore(
         }
         source.stop()
         audioThread?.interrupt()
+        previousAudioThread = audioThread
         audioThread = null
         val vt = videoThread
         val vh = videoHandler
@@ -1370,6 +1373,45 @@ class DnaEngineCore(
         /** Einrichtung dieses Versuchs (siehe [VARIANT_TUNED] …). */
         private var variant = VARIANT_TUNED
 
+        /**
+         * Synchroner Betrieb: freie Eingänge holen, Proben hinein, fertige Bilder heraus – alle paar Millisekunden.
+         * Steht vor dem init-Block: Felder werden in der Reihenfolge der Datei gesetzt; dahinter war es beim ersten Aufruf
+         * noch null (Absturz „Runnable.run() on a null object“ auf dem Fire TV).
+         */
+        private val syncInfo = MediaCodec.BufferInfo()
+        private val syncLoop: Runnable = object : Runnable {
+            override fun run() {
+                if (released) return
+                var busy = false
+                try {
+                    while (!released) {
+                        val index = codec.dequeueInputBuffer(0)
+                        if (index < 0) break
+                        freeInputs.addLast(index)
+                        busy = true
+                    }
+                    if (!released) pump()
+                    while (!released) {
+                        val out = codec.dequeueOutputBuffer(syncInfo, 0)
+                        when {
+                            out >= 0 -> {
+                                outputAvailable(out, syncInfo.presentationTimeUs, syncInfo.flags)
+                                busy = true
+                            }
+                            out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> formatChanged(codec.outputFormat)
+                            out == MediaCodec.INFO_TRY_AGAIN_LATER -> break
+                            else -> Unit // Ausgabepuffer geändert (alte Geräte): nichts zu tun
+                        }
+                    }
+                } catch (e: Exception) {
+                    DnaLog.w(TAG, "Video-Decoder-Fehler $name: ${e.javaClass.simpleName} ${e.message}")
+                    if (!released) failed(e.javaClass.simpleName + (e.message?.let { ": $it" } ?: ""))
+                    return
+                }
+                if (!released) videoHandler?.postDelayed(this, if (busy) 1L else SYNC_POLL_MS)
+            }
+        }
+
         init {
             /**
              * [tuned]: wie Media3 (Platz für Auflösungswechsel, Echtzeit-Vorrang, bei 4K Arbeitstakt 60 Bilder/s).
@@ -1501,41 +1543,6 @@ class DnaEngineCore(
                 if (format.containsKey(MediaFormat.KEY_COLOR_TRANSFER))
                     deinterlacer?.pq = format.getInteger(MediaFormat.KEY_COLOR_TRANSFER) == MediaFormat.COLOR_TRANSFER_ST2084
                 listener.onVideoSize(cw, ch)
-            }
-        }
-
-        /** Synchroner Betrieb: freie Eingänge holen, Proben hinein, fertige Bilder heraus – alle paar Millisekunden. */
-        private val syncInfo = MediaCodec.BufferInfo()
-        private val syncLoop: Runnable = object : Runnable {
-            override fun run() {
-                if (released) return
-                var busy = false
-                try {
-                    while (!released) {
-                        val index = codec.dequeueInputBuffer(0)
-                        if (index < 0) break
-                        freeInputs.addLast(index)
-                        busy = true
-                    }
-                    if (!released) pump()
-                    while (!released) {
-                        val out = codec.dequeueOutputBuffer(syncInfo, 0)
-                        when {
-                            out >= 0 -> {
-                                outputAvailable(out, syncInfo.presentationTimeUs, syncInfo.flags)
-                                busy = true
-                            }
-                            out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> formatChanged(codec.outputFormat)
-                            out == MediaCodec.INFO_TRY_AGAIN_LATER -> break
-                            else -> Unit // Ausgabepuffer geändert (alte Geräte): nichts zu tun
-                        }
-                    }
-                } catch (e: Exception) {
-                    DnaLog.w(TAG, "Video-Decoder-Fehler $name: ${e.javaClass.simpleName} ${e.message}")
-                    if (!released) failed(e.javaClass.simpleName + (e.message?.let { ": $it" } ?: ""))
-                    return
-                }
-                if (!released) videoHandler?.postDelayed(this, if (busy) 1L else SYNC_POLL_MS)
             }
         }
 
@@ -1751,6 +1758,10 @@ class DnaEngineCore(
     @Volatile private var audioLate = false
     /** Der Ton sammelt noch seinen Startvorrat (Daten kommen an, nur noch nicht genug) – kein Fehler, sondern Puffern. */
     @Volatile private var audioCollecting = false
+    /** Woran der Ton vor dem Start gerade ist (fürs Protokoll, wenn er nicht kommt). */
+    @Volatile private var audioPhase = "startet"
+    /** Ton-Thread des vorigen Stroms: Der neue legt seine Tonausgabe erst an, wenn der alte seine freigegeben hat. */
+    @Volatile private var previousAudioThread: Thread? = null
 
     /**
      * Nach dem ersten Bild auf den Ton warten. Sammelt er nur noch Vorrat (Puffer „Stabil“, Datenrate wird gemessen),
@@ -1765,16 +1776,17 @@ class DnaEngineCore(
         check = Runnable {
             if (gen != generation || !running.get() || audioStarted || !buffering || paused) return@Runnable
             val waited = SystemClock.elapsedRealtime() - since
-            if (audioCollecting && waited < AUDIO_START_MAX_MS) {
+            // Daten kommen an bzw. die Tonausgabe wird gerade angelegt (Durchreichen: Soundbar stellt um) – mitwarten.
+            if ((audioCollecting || audioPhase == PHASE_OPENING) && waited < AUDIO_START_MAX_MS) {
                 if (!noted) {
                     noted = true
-                    DnaLog.i(TAG, "Ton sammelt noch Vorrat – Bild wartet, damit beide gemeinsam starten")
+                    DnaLog.i(TAG, "Ton ${if (audioCollecting) "sammelt noch Vorrat" else "öffnet die Tonausgabe"} – Bild wartet, damit beide gemeinsam starten")
                 }
                 videoHandler?.postDelayed(check, 200)
                 return@Runnable
             }
             DnaLog.w(TAG, "Ton startet nicht nach ${waited} ms (${audioDecoderName ?: "kein Decoder"}" +
-                (if (audioCollecting) ", Vorrat reicht noch nicht" else "") + ") – Bild läuft ohne Ton los")
+                (if (audioCollecting) ", Vorrat reicht noch nicht" else "") + ", Ton $audioPhase, ${synchronized(lock) { audioQueue.size }} Proben da) – Bild läuft ohne Ton los")
             audioLate = true
             setBuffering(false)
         }
@@ -1785,7 +1797,7 @@ class DnaEngineCore(
     /** [hard]: die Tonausgabe meldet einen echten Fehler (nicht nur „spielt noch nicht“ – das kann auch ein langsames HDMI sein). */
     private class AudioPathFailed(message: String, val hard: Boolean = false) : Exception(message)
 
-    private fun audioLoop(gen: Int) {
+    private fun audioLoop(gen: Int, previous: Thread? = null) {
         var decoder: MediaCodec? = null
         var track: AudioTrack? = null
         var format: AudioInfo? = null
@@ -1811,12 +1823,17 @@ class DnaEngineCore(
         var pathInputs = 0
         var pathOutputs = 0
         var playingSinceMs = 0L
-        fun releaseAll() {
+        fun releaseAll(park: Boolean = false) {
             // Erst die Uhr lösen, dann freigeben (sonst fragt die Anzeige eine freigegebene Tonausgabe ab).
             clock.audio = null
             currentAudioTrack = null
             runCatching { decoder?.stop(); decoder?.release() }
-            runCatching { track?.stop(); track?.release() }
+            val t = track
+            // Durchreichen, das lief: für den nächsten Sender aufheben statt schließen (siehe [ParkedOutput]).
+            val keep = park && t != null && passthroughMode && !tunnelActive && started && format != null &&
+                runCatching { (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) > 0 }.getOrDefault(false)
+            if (keep && t != null) ParkedOutput.park(t, parkedKey(codecTrack?.codec, format!!))
+            else runCatching { t?.pause(); t?.flush(); t?.release() }
             runCatching { native?.release() }
             decoder = null
             track = null
@@ -1982,6 +1999,7 @@ class DnaEngineCore(
                     var emptySince = 0L
                     while (alive(gen) && (audioQueue.isEmpty() || !startBufferReachedLocked(forAudio = true))) {
                         if (inputEnded && audioQueue.isEmpty()) break
+                        if (!started) audioPhase = if (audioQueue.isEmpty()) "wartet auf Daten" else "sammelt Vorrat"
                         // Vor dem Start: Daten kommen an, der Vorrat reicht nur noch nicht (Puffern, kein Fehler).
                         audioCollecting = !started && audioQueue.isNotEmpty()
                         // Vorrat leer (nicht am Ende): anhalten, bis wieder genug da ist – aber erst, wenn die Lücke
@@ -2014,6 +2032,7 @@ class DnaEngineCore(
                 // Start mit Bild: Ton erst ab dem ersten gezeigten Bild (davor liegt Ton ohne Bild, bis zum ersten
                 // Schlüsselbild). Kommt kein Bild (Decoder gestört, Bild aus), nach kurzer Zeit ohne warten.
                 if (!started && videoTrack != null && videoEnabled && surface != null) {
+                    if (videoStartUs == Long.MIN_VALUE) audioPhase = "wartet auf das erste Bild"
                     val waitUntil = SystemClock.elapsedRealtime() + VIDEO_START_WAIT_MS
                     while (videoStartUs == Long.MIN_VALUE && alive(gen) && SystemClock.elapsedRealtime() < waitUntil) Thread.sleep(10)
                     val from = videoStartUs
@@ -2042,6 +2061,10 @@ class DnaEngineCore(
                     // Spur oder Format gewechselt: Decoder bzw. Tonausgabe neu.
                     if ((decoder == null && track == null && native == null) || f != format || sample.track != codecTrack) {
                         releaseAll()
+                        // Erst wenn der Ton des vorigen Stroms seine Tonausgabe abgegeben hat (Fire TV: nur ein Weg fürs
+                        // Durchreichen; zwei gleichzeitig ließen den neuen stumm).
+                        previous?.let { p -> runCatching { p.join(PREVIOUS_AUDIO_WAIT_MS) } }
+                        audioPhase = PHASE_OPENING
                         format = f
                         codecTrack = sample.track
                         firstPtsUs = Long.MIN_VALUE
@@ -2062,7 +2085,15 @@ class DnaEngineCore(
                                 passthroughMode = true
                                 audioDecoderName = "Durchreichen an Receiver ($codec)"
                                 outRate = f.sampleRate.takeIf { it > 0 } ?: 48_000
-                                newTrack(createPassthroughTrack(codec, outRate, f.channels))
+                                val reused = if (tunnelActive) null else ParkedOutput.take(parkedKey(codec, f))
+                                if (reused != null) DnaLog.i(TAG, "Ton: Durchreichen vom vorigen Sender übernommen (Soundbar muss nicht umstellen)")
+                                newTrack(reused ?: run {
+                                    val openedAt = SystemClock.elapsedRealtime()
+                                    createPassthroughTrack(codec, outRate, f.channels).also {
+                                        val ms = SystemClock.elapsedRealtime() - openedAt
+                                        if (ms > 300) DnaLog.w(TAG, "Ton: Tonausgabe fürs Durchreichen anlegen dauerte $ms ms")
+                                    }
+                                })
                             }
                             else -> {
                                 val layer = mpegLayer(codec, sample.data)
@@ -2103,6 +2134,7 @@ class DnaEngineCore(
                             }
                         }
                         DnaLog.i(TAG, "Ton: $codec ${f.sampleRate} Hz ${f.channels} Kanäle über ${audioDecoderName ?: "?"}")
+                        if (!started) audioPhase = "schreibt die ersten Daten"
                         passthrough = passthroughMode
                     }
                     // Eigener Decoder: PCM direkt; Tonausgabe nach dem ersten Rahmen (Format steht erst dann fest).
@@ -2188,9 +2220,13 @@ class DnaEngineCore(
                 setBuffering(false)
             }
         } finally {
-            releaseAll()
+            releaseAll(park = !alive(gen))
         }
     }
+
+    /** Schlüssel einer Tonausgabe fürs Durchreichen (nur dieselbe Art wird übernommen). */
+    private fun parkedKey(codec: Codec?, f: AudioInfo): String =
+        "${codec?.let { passthroughEncoding(it) }}/${f.sampleRate.takeIf { it > 0 } ?: 48_000}/${channelMask(f.channels.coerceAtLeast(2))}"
 
     /** Medienzeit, an der der nächste PCM-Block für die Ton-Bearbeitung erwartet wird (MIN = neu ansetzen). */
     @Volatile private var processorNextUs = Long.MIN_VALUE
@@ -2290,6 +2326,7 @@ class DnaEngineCore(
     }
 
     private fun createPcmTrack(rate: Int, channels: Int): AudioTrack {
+        ParkedOutput.discard()
         val mask = channelMask(channels)
         val min = AudioTrack.getMinBufferSize(rate, mask, AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(4096)
         return AudioTrack.Builder()
@@ -2701,6 +2738,9 @@ class DnaEngineCore(
         private const val AUDIO_START_GRACE_MS = 2_500L
         /** So lange wartet das Bild höchstens auf einen Ton, der noch seinen Startvorrat sammelt. */
         private const val AUDIO_START_MAX_MS = 9_000L
+        /** So lange wartet der Ton eines neuen Stroms höchstens, bis der vorige seine Tonausgabe abgegeben hat. */
+        private const val PREVIOUS_AUDIO_WAIT_MS = 1_500L
+        private const val PHASE_OPENING = "öffnet die Tonausgabe"
         /** Prüfzeitraum der Ton-Uhr gegen die echte Zeit. */
         private const val CLOCK_CHECK_US = 4_000_000L
 
@@ -2889,3 +2929,47 @@ class DnaEngineCore(
 
 private fun Any.wait(ms: Long) = (this as Object).wait(ms)
 private fun Any.notifyAll() = (this as Object).notifyAll()
+
+/**
+ * Tonausgabe fürs Durchreichen (Dolby an Soundbar/Receiver) zwischen zwei Sendern aufheben: Schließen und neu Öffnen
+ * lässt HDMI zweimal umschalten (Dolby → normal → Dolby). Soundbar und Fernseher brauchen dafür jedes Mal Sekunden –
+ * nach dem Umschalten blieb der Ton oft stumm, bei schnellem Umschalten hing sogar der Fernseher kurz. Hat der nächste
+ * Sender dieselbe Art Ton, übernimmt er die offene Tonausgabe; sonst (oder nach [KEEP_MS]) wird sie geschlossen.
+ */
+private object ParkedOutput {
+    private const val KEEP_MS = 4_000L
+    private var track: android.media.AudioTrack? = null
+    private var key: String? = null
+
+    @Synchronized fun park(t: android.media.AudioTrack, k: String) {
+        runCatching { t.pause(); t.flush() }.onFailure {
+            runCatching { t.release() }
+            return
+        }
+        releaseLocked()
+        track = t
+        key = k
+        kotlin.concurrent.thread(name = "dna-audio-park", isDaemon = true) {
+            Thread.sleep(KEEP_MS)
+            synchronized(this) { if (track === t) releaseLocked() }
+        }
+    }
+
+    /** Die aufgehobene Tonausgabe, wenn sie zu [k] passt; eine unpassende wird geschlossen. */
+    @Synchronized fun take(k: String): android.media.AudioTrack? {
+        val t = track ?: return null
+        track = null
+        if (key == k && t.state == android.media.AudioTrack.STATE_INITIALIZED) return t
+        runCatching { t.release() }
+        return null
+    }
+
+    /** Vor einer anderen Tonausgabe (PCM): die aufgehobene schließen, damit HDMI frei ist. */
+    @Synchronized fun discard() = releaseLocked()
+
+    private fun releaseLocked() {
+        track?.let { runCatching { it.release() } }
+        track = null
+        key = null
+    }
+}
