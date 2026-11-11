@@ -243,6 +243,7 @@ class DnaEngineCore(
         videoStartUs = Long.MIN_VALUE
         audioStarted = false
         audioLate = false
+        audioCollecting = false
         parameterSets = null
         parameterSetsTrack = null
         // Anzeige: nicht den Decoder des vorigen Senders zeigen, solange für diesen noch keiner läuft.
@@ -1149,13 +1150,7 @@ class DnaEngineCore(
                 if (videoStartUs == Long.MIN_VALUE) videoStartUs = ptsUs
                 listener.onFirstFrame()
                 if (!audioPlayable) setBuffering(false)
-                else videoHandler?.postDelayed({
-                    if (gen == generation && running.get() && !audioStarted && buffering && !paused) {
-                        DnaLog.w(TAG, "Ton startet nicht (${audioDecoderName ?: "kein Decoder"}) – Bild läuft ohne Ton los")
-                        audioLate = true
-                        setBuffering(false)
-                    }
-                }, AUDIO_START_GRACE_MS)
+                else awaitAudioStart(gen)
             }
         }
 
@@ -1614,15 +1609,7 @@ class DnaEngineCore(
                         rememberHardware(softwareKey(config), failed = false)
                         listener.onFirstFrame()
                         if (!audioPlayable) setBuffering(false)
-                        else videoHandler?.postDelayed({
-                            // Ton kommt nicht (Decoder hängt, Durchreichen klappt nicht): Das Bild wartet nicht länger,
-                            // der Ton steigt ein, sobald er läuft.
-                            if (gen == generation && running.get() && !audioStarted && buffering && !paused) {
-                                DnaLog.w(TAG, "Ton startet nicht (${audioDecoderName ?: "kein Decoder"}) – Bild läuft ohne Ton los")
-                                audioLate = true
-                                setBuffering(false)
-                            }
-                        }, AUDIO_START_GRACE_MS)
+                        else awaitAudioStart(gen)
                     }
                 }
             }
@@ -1659,6 +1646,37 @@ class DnaEngineCore(
     @Volatile private var audioStarted = false
     /** Das Bild lief los, ohne dass der Ton kam: Ton steigt später an der laufenden Uhr ein. */
     @Volatile private var audioLate = false
+    /** Der Ton sammelt noch seinen Startvorrat (Daten kommen an, nur noch nicht genug) – kein Fehler, sondern Puffern. */
+    @Volatile private var audioCollecting = false
+
+    /**
+     * Nach dem ersten Bild auf den Ton warten. Sammelt er nur noch Vorrat (Puffer „Stabil“, Datenrate wird gemessen),
+     * wartet das Bild mit – bis [AUDIO_START_MAX_MS] –, damit Bild und Ton gemeinsam loslaufen. Früher lief das Bild nach
+     * 2,5 s stumm los und der Ton sprang später hinein: genau der unsaubere Übergang nach dem Umschalten (gerade nach
+     * Dolby, wenn der Fernseher den Ton umstellt). Nur wenn der Ton wirklich hängt, läuft das Bild ohne ihn los.
+     */
+    private fun awaitAudioStart(gen: Int) {
+        val since = SystemClock.elapsedRealtime()
+        var noted = false
+        lateinit var check: Runnable
+        check = Runnable {
+            if (gen != generation || !running.get() || audioStarted || !buffering || paused) return@Runnable
+            val waited = SystemClock.elapsedRealtime() - since
+            if (audioCollecting && waited < AUDIO_START_MAX_MS) {
+                if (!noted) {
+                    noted = true
+                    DnaLog.i(TAG, "Ton sammelt noch Vorrat – Bild wartet, damit beide gemeinsam starten")
+                }
+                videoHandler?.postDelayed(check, 200)
+                return@Runnable
+            }
+            DnaLog.w(TAG, "Ton startet nicht nach ${waited} ms (${audioDecoderName ?: "kein Decoder"}" +
+                (if (audioCollecting) ", Vorrat reicht noch nicht" else "") + ") – Bild läuft ohne Ton los")
+            audioLate = true
+            setBuffering(false)
+        }
+        videoHandler?.postDelayed(check, AUDIO_START_GRACE_MS)
+    }
 
     /** Der gewählte Tonweg versagt (Decoder stumm, Tonausgabe nimmt nichts an): auf den nächsten wechseln. */
     /** [hard]: die Tonausgabe meldet einen echten Fehler (nicht nur „spielt noch nicht“ – das kann auch ein langsames HDMI sein). */
@@ -1860,6 +1878,8 @@ class DnaEngineCore(
                     var emptySince = 0L
                     while (alive(gen) && (audioQueue.isEmpty() || !startBufferReachedLocked())) {
                         if (inputEnded && audioQueue.isEmpty()) break
+                        // Vor dem Start: Daten kommen an, der Vorrat reicht nur noch nicht (Puffern, kein Fehler).
+                        audioCollecting = !started && audioQueue.isNotEmpty()
                         // Vorrat leer (nicht am Ende): anhalten, bis wieder genug da ist – aber erst, wenn die Lücke
                         // länger dauert, als die Tonausgabe noch Vorrat hat. Kurze Lücken im Datenstrom (Netz-Schwankung)
                         // überbrückt sie; früher stand das Bild dann gleich für Sekunden.
@@ -1873,6 +1893,7 @@ class DnaEngineCore(
                         }
                         lock.wait(if (emptySince > 0L && !buffering) 20 else 50)
                     }
+                    audioCollecting = false
                     if (buffering && started && (bufferedAheadLocked() >= resumeBufferUs() || inputEnded)) setBuffering(false)
                     audioQueue.removeFirstOrNull()?.also { queuedBytes -= it.data.size; lock.notifyAll() }
                 }
@@ -2537,6 +2558,8 @@ class DnaEngineCore(
         private const val SILENT_AUDIO_MS = 3_000L
         /** So lange nach dem ersten Bild wartet das Bild höchstens auf den Ton, dann läuft es allein los. */
         private const val AUDIO_START_GRACE_MS = 2_500L
+        /** So lange wartet das Bild höchstens auf einen Ton, der noch seinen Startvorrat sammelt. */
+        private const val AUDIO_START_MAX_MS = 9_000L
         /** Prüfzeitraum der Ton-Uhr gegen die echte Zeit. */
         private const val CLOCK_CHECK_US = 4_000_000L
 
