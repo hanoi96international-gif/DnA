@@ -441,8 +441,11 @@ class DnaEngineCore(
         // Über mindestens 3 s (B-Bilder kommen umsortiert, die Spanne stimmt trotzdem).
         if (fpsCount < 60 || span < 3_000_000) return
         val fps = ((fpsCount - 1) * 1_000_000.0 / span).toFloat()
-        val rounded = listOf(23.976f, 24f, 25f, 29.97f, 30f, 48f, 50f, 59.94f, 60f).minBy { kotlin.math.abs(it - fps) }
-        if (kotlin.math.abs(rounded - fps) / rounded < 0.03f) {
+        // Live-Fernsehen sendet nie 24/48 fps (das sind Kinofilme): dort nur die Fernseh-Bildraten. 47,7 fps eines
+        // Senders mit Halbbildern war in Wahrheit 50 – der Fernseher sollte auf 50 Hz, nicht 48.
+        val candidates = if (live) listOf(25f, 29.97f, 30f, 50f, 59.94f, 60f) else listOf(23.976f, 24f, 25f, 29.97f, 30f, 48f, 50f, 59.94f, 60f)
+        val rounded = candidates.minBy { kotlin.math.abs(it - fps) }
+        if (kotlin.math.abs(rounded - fps) / rounded < (if (live) 0.06f else 0.03f)) {
             streamFrameRate = rounded
             DnaLog.i(TAG, "Bildrate des Stroms: ${"%.2f".format(fps)} → $rounded fps")
         } else resetStreamFps()
@@ -787,11 +790,20 @@ class DnaEngineCore(
 
     private fun startBufferReached(): Boolean = synchronized(lock) { startBufferReachedLocked() }
 
-    private fun startBufferReachedLocked(): Boolean {
+    /**
+     * [forAudio]: Der Ton prüft, ob ab dem ersten gezeigten Bild genug Vorrat da ist. Der Bild-Decoder (der dieses erste
+     * Bild erst liefert) prüft wie bisher ab dem ersten Bild im Vorrat.
+     */
+    private fun startBufferReachedLocked(forAudio: Boolean = false): Boolean {
         if (clock.started || inputEnded) return true
         val first = minOf(videoQueue.firstOrNull()?.timeUs ?: Long.MAX_VALUE, audioQueue.firstOrNull()?.timeUs ?: Long.MAX_VALUE)
         val last = maxOf(videoQueue.lastOrNull()?.timeUs ?: Long.MIN_VALUE, audioQueue.lastOrNull()?.timeUs ?: Long.MIN_VALUE)
-        val from = maxOf(first, seekTargetUs)
+        // Mit Bild: Der Vorrat zählt erst ab dem ersten gezeigten Bild (davor liegende Bilder bis zum Schlüsselbild und
+        // der Ton dazu werden ohnehin verworfen). Sonst war der Vorrat beim Start nur scheinbar da – gleich danach
+        // „Vorrat leer“ (Kurzbericht Fire TV 11.11., 18:25). Kommt kein Bild, nach [VIDEO_START_WAIT_MS] wie bisher.
+        val withVideo = forAudio && videoTrack != null && videoEnabled && surface != null
+        if (withVideo && videoStartUs == Long.MIN_VALUE && SystemClock.elapsedRealtime() - openedAtMs < VIDEO_START_WAIT_MS) return false
+        val from = maxOf(first, seekTargetUs, if (withVideo) videoStartUs else Long.MIN_VALUE)
         // Live mit Bild: erst starten, wenn die Datenrate gemessen ist (4K braucht mehr Vorlauf als die schnelle Vorgabe).
         if (live && videoTrack != null && videoEnabled && !rateMeasured && queuedBytes < config.maxBufferBytes / 2 && audioQueue.size < 200) return false
         val frameLimit = if (highBitrate) 180 else 90
@@ -1961,7 +1973,7 @@ class DnaEngineCore(
             while (alive(gen)) {
                 val sample = synchronized(lock) {
                     var emptySince = 0L
-                    while (alive(gen) && (audioQueue.isEmpty() || !startBufferReachedLocked())) {
+                    while (alive(gen) && (audioQueue.isEmpty() || !startBufferReachedLocked(forAudio = true))) {
                         if (inputEnded && audioQueue.isEmpty()) break
                         // Vor dem Start: Daten kommen an, der Vorrat reicht nur noch nicht (Puffern, kein Fehler).
                         audioCollecting = !started && audioQueue.isNotEmpty()
