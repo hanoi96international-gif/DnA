@@ -246,6 +246,7 @@ class DnaEnginePlayer(
             else -> PlaybackException.ERROR_CODE_DECODING_FAILED
         }
         error = PlaybackException(message, null, code)
+        rememberPosition()
         playbackState = Player.STATE_IDLE
         core.stop()
         invalidateState()
@@ -396,7 +397,18 @@ class DnaEnginePlayer(
         return Futures.immediateVoidFuture()
     }
 
+    /**
+     * Film: die jetzige Stelle als Startstelle merken, bevor der Kern anhält. Nach einem Abbruch (Anbieter trennt,
+     * Fehler) setzt die App mit stop() → seekTo() → prepare() neu an; ohne das begann der Film wieder von vorn.
+     */
+    private fun rememberPosition() {
+        if (live || currentUrl == null) return
+        val ms = core.positionUs / 1000
+        if (ms > 0) startPositionMs = ms
+    }
+
     override fun handleStop(): ListenableFuture<*> {
+        rememberPosition()
         core.release()
         main.removeCallbacks(firstFrameTimeout)
         playbackState = Player.STATE_IDLE
@@ -416,7 +428,12 @@ class DnaEnginePlayer(
 
     /** Film: an die Stelle springen. Live: „an den Rand“ = ab dem Neuesten lesen (Zeitversatz-Speicher bzw. Anbieter neu). */
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
-        if (item == null || playbackState == Player.STATE_IDLE) return Futures.immediateVoidFuture()
+        if (item == null) return Futures.immediateVoidFuture()
+        if (playbackState == Player.STATE_IDLE) {
+            // Angehalten (nach stop() oder Fehler): Die Stelle gilt für das nächste prepare().
+            if (!live && positionMs != C.TIME_UNSET) startPositionMs = positionMs.coerceAtLeast(0)
+            return Futures.immediateVoidFuture()
+        }
         if (live || !seekable) {
             goLive()
         } else {
