@@ -1700,6 +1700,7 @@ class PlayerActivity : ComponentActivity() {
         val request = vod
         if (request != null) memoryKey()?.let { key -> container.playerMemory.update(key) { it.copy(text = null, load = language) } }
         if (request != null && via != null) memoryKey()?.let { container.playerMemory.setSubtitleSource(it, via) }
+        backgroundCheck = null
         val chosen = via ?: memoryKey()?.let { container.playerMemory.subtitleSource(it) }
         val decided = request?.let { container.playerMemory.subtitleSource(PlayerMemory.autoKey(it.key)) }
         languagePicker = false
@@ -1746,6 +1747,23 @@ class PlayerActivity : ComponentActivity() {
                     Log.w(SUBTITLE_TAG, "Suche fehlgeschlagen", it)
                     onlineProblem = describeOnlineProblem(it)
                 }.getOrNull()
+                // Der Film hat eine eigene vollständige Spur und die gefundene Datei passt nicht nachweislich genau zu dieser
+                // Filmdatei (nur nach Titel gefunden): gleich die Spur übersetzen – sie ist immer zeitgenau, die Untertitel
+                // sind in Sekunden da. Früher wurde erst die Datei bis zu zwei Minuten lang am Film geprüft und erst dann
+                // gewechselt (bei Sprachen wie Indonesisch passt sie meist nicht). Die Datei bleibt im Menü wählbar.
+                if (found != null && embeddedSource != null && chosen == null && decided != PlayerMemory.SOURCE_FILE &&
+                    found.source == SubtitleRepository.Source.TITLE
+                ) {
+                    subtitleFiles[language] = found.file
+                    loadedLanguages = subtitleFiles.keys.toList()
+                    subLog("OpenSubtitles nur nach Titel gefunden – übersetze sofort die Spur des Films (zeitgenau)")
+                    startLiveTranslation(language, embeddedSource, preroll = true)
+                    // Die Datei im Hintergrund an der Spur prüfen: Passt sie (menschlich übersetzt), wird gewechselt.
+                    val cues = withContext(Dispatchers.IO) { parseCues(found.file) }
+                    if (cues.isNotEmpty()) backgroundCheck = BackgroundCheck(language, cues)
+                    subtitleStatus = "Übersetze die Untertitel des Films (zeitgenau) – Datei von OpenSubtitles im Menü wählbar"
+                    return@launch
+                }
                 if (found != null) {
                     autoSwitchNext = embeddedSource != null && chosen != PlayerMemory.SOURCE_FILE
                     attachLoaded(language, found)
@@ -3209,11 +3227,69 @@ class PlayerActivity : ComponentActivity() {
     private fun formatShift(ms: Long): String = String.format(Locale.GERMAN, "%+.1f s", ms / 1000f)
 
 
+    /**
+     * Gefundene OpenSubtitles-Datei, die neben der laufenden Übersetzung der Spur im Hintergrund geprüft wird
+     * (Einblendungen der Spur als Taktgeber, wie beim Abgleich geladener Dateien).
+     */
+    private class BackgroundCheck(val language: String, val cues: List<TimedCue>) {
+        val references = ArrayList<Long>()
+        var showing = false
+        var checking = false
+    }
+    private var backgroundCheck: BackgroundCheck? = null
+
+    private fun recordBackgroundReference(cueGroup: CueGroup) {
+        val check = backgroundCheck ?: return
+        val showing = cueGroup.cues.isNotEmpty()
+        val begins = showing && !check.showing
+        check.showing = showing
+        if (!begins) return
+        val p = player ?: return
+        val position = p.currentPosition
+        val time = (cueGroup.presentationTimeUs / 1000).takeIf { cueGroup.presentationTimeUs != C.TIME_UNSET && abs(it - position) < 3_000 } ?: position
+        if (check.references.isNotEmpty() && abs(check.references.last() - time) < 300) return
+        check.references += time
+        val n = check.references.size
+        // Alle 10 Einblendungen ab 20 prüfen; nach 60 ohne klares Passen aufgeben (die Übersetzung bleibt).
+        if (n >= BACKGROUND_GIVE_UP) {
+            subLog("OpenSubtitles-Datei passt nach $n Einblendungen nicht klar – Übersetzung bleibt")
+            backgroundCheck = null
+            // Für diesen Film entschieden: beim nächsten Mal gleich die Übersetzung (auch wenn die Datei gespeichert ist).
+            vod?.let { container.playerMemory.setSubtitleSource(PlayerMemory.autoKey(it.key), PlayerMemory.SOURCE_TRANSLATE) }
+            return
+        }
+        if (n < DECIDE_REFERENCES || n % 10 != 0 || check.checking) return
+        check.checking = true
+        val references = check.references.toList()
+        val starts = check.cues.map { it.start }
+        lifecycleScope.launch {
+            val (global, result) = withContext(Dispatchers.Default) { alignTo(references, starts) }
+            check.checking = false
+            if (backgroundCheck !== check || liveTranslateTarget != check.language) return@launch
+            val percent = result?.percent ?: 0
+            subLog("OpenSubtitles-Datei im Hintergrund: passt $percent % nach ${references.size} Einblendungen")
+            if (result == null || percent < FIT_PERCENT) return@launch
+            backgroundCheck = null
+            stopLiveTranslation()
+            beginExternal(check.language, check.cues, null)
+            elasticTiming = result.timing
+            global?.let { subtitleTiming = it }
+            matchPercent = percent
+            syncedByReference = true
+            subtitleAutoSynced = true
+            sourceDecided = true
+            subtitleStatus = "OpenSubtitles-Datei passt ($percent %) – menschlich übersetzte Untertitel übernommen"
+            saveTiming()
+            vod?.let { container.playerMemory.setSubtitleSource(PlayerMemory.autoKey(it.key), PlayerMemory.SOURCE_FILE) }
+        }
+    }
+
     private fun onCuesChanged(cueGroup: CueGroup) {
         if (externalLanguage != null) {
             recordReference(cueGroup)
             return
         }
+        recordBackgroundReference(cueGroup)
         val target = liveTranslateTarget ?: return
         // Mitgelesene Spur: Anzeige und Übersetzung laufen mit Vorlauf (startAhead).
         if (aheadFormat?.let { embedded?.hasEntries(it) } == true) return
@@ -5873,6 +5949,8 @@ class PlayerActivity : ComponentActivity() {
         private const val WRONG_FILE_REFERENCES = 60
         /** OpenSubtitles bleibt ab so viel Prozent Übereinstimmung, darunter wird zur Übersetzung der Spur gewechselt. */
         private const val FIT_PERCENT = 90
+        /** Hintergrundprüfung einer OpenSubtitles-Datei neben der Übersetzung: nach so vielen Einblendungen aufgeben. */
+        private const val BACKGROUND_GIVE_UP = 60
         /** So viele Einblendungen, bevor endgültig entschieden wird (meist die ersten 20–30 s Dialog, vorausgelesen). */
         private const val DECIDE_REFERENCES = 20
         /** Darunter ist die Datei schon bei den ersten Einblendungen klar daneben. */
