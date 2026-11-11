@@ -242,6 +242,7 @@ class DnaEngineCore(
     /** Filme: an [us] springen (Schlüsselbild davor, dann genau ab [us] zeigen). */
     fun seekTo(us: Long) {
         if (!source.hasUrl) return
+        DnaLog.i(TAG, "Spulen auf ${us / 1000} ms")
         stop()
         start(us.coerceIn(0, if (durationUs > 0) durationUs else Long.MAX_VALUE), first = false)
     }
@@ -272,6 +273,7 @@ class DnaEngineCore(
         videoHandler = Handler(videoThread!!.looper)
         source.start(gen, startUs, first) { what, block -> safely(what, block) }
         audioPhase = "startet"
+        watchStuck(gen)
         val previous = previousAudioThread
         audioThread = thread(name = "dna-audio", isDaemon = true) { safely("Ton") { audioLoop(gen, previous) } }
         processorNextUs = Long.MIN_VALUE
@@ -307,12 +309,46 @@ class DnaEngineCore(
     private fun setBuffering(value: Boolean) {
         if (buffering == value) return
         buffering = value
+        bufferingSinceMs = if (value) SystemClock.elapsedRealtime() else 0L
         applyClockPause()
         currentAudioTrack?.let { runCatching { if (paused || value) it.pause() else it.play() } }
         listener.onBuffering(value)
     }
 
     private fun applyClockPause() = clock.setPaused(paused || buffering)
+
+    /** Seit wann ununterbrochen gepuffert wird (0 = nicht). */
+    @Volatile private var bufferingSinceMs = 0L
+
+    /**
+     * Hängt die Wiedergabe länger als [STUCK_LOG_MS] im Puffern (ohne Anhalten), einmal den Zustand ins Protokoll:
+     * Vorrat, Zeiten, wo der Ton steht. So lässt sich ein Hänger aus einem Kurzbericht genau zuordnen.
+     */
+    private fun watchStuck(gen: Int) {
+        var logged = false
+        val check = object : Runnable {
+            override fun run() {
+                if (gen != generation || !running.get()) return
+                val since = bufferingSinceMs
+                if (!logged && buffering && !paused && since > 0 && SystemClock.elapsedRealtime() - since > STUCK_LOG_MS) {
+                    logged = true
+                    DnaLog.w(TAG, "Hängt seit ${SystemClock.elapsedRealtime() - since} ms im Puffern: ${stateLine()}")
+                }
+                videoHandler?.postDelayed(this, 1_000)
+            }
+        }
+        videoHandler?.postDelayed(check, 1_000)
+    }
+
+    /** Zustand für das Protokoll (Hänger, Tests). */
+    fun stateLine(): String = synchronized(lock) {
+        fun ms(us: Long?) = us?.takeIf { it != Long.MIN_VALUE && it != Long.MAX_VALUE }?.let { "${it / 1000}" } ?: "–"
+        "Bild ${videoQueue.size} (${ms(videoQueue.firstOrNull()?.timeUs)}–${ms(videoQueue.lastOrNull()?.timeUs)} ms), " +
+            "Ton ${audioQueue.size} (${ms(audioQueue.firstOrNull()?.timeUs)}–${ms(audioQueue.lastOrNull()?.timeUs)} ms), " +
+            "${queuedBytes / 1024} KB, Ziel ${ms(seekTargetUs)} ms, erstes Bild ${ms(videoStartUs)} ms, " +
+            "Uhr ${if (clock.started) ms(clock.nowUs()) + " ms" else "steht"}, Ton: ${if (audioStarted) "läuft" else audioPhase}, " +
+            "Bild-Decoder ${videoDecoderName ?: if (softVideo != null) "eigener" else "keiner"}, Ende ${inputEnded}, Start ok ${startBufferReachedLocked(forAudio = true)}"
+    }
 
     fun setVolume(volume: Float) {
         this.volume = volume.coerceIn(0f, 1f)
@@ -1770,11 +1806,19 @@ class DnaEngineCore(
      * Dolby, wenn der Fernseher den Ton umstellt). Nur wenn der Ton wirklich hängt, läuft das Bild ohne ihn los.
      */
     private fun awaitAudioStart(gen: Int) {
-        val since = SystemClock.elapsedRealtime()
+        var since = SystemClock.elapsedRealtime()
         var noted = false
         lateinit var check: Runnable
         check = Runnable {
-            if (gen != generation || !running.get() || audioStarted || !buffering || paused) return@Runnable
+            if (gen != generation || !running.get() || audioStarted || !buffering) return@Runnable
+            // Angehalten (etwa der Vorlauf der Untertitel-Übersetzung gleich nach dem Start): weiter beobachten und die
+            // Frist nach dem Weiterlaufen neu beginnen. Früher endete die Prüfung hier – hing der Ton danach, lief das
+            // Bild nie los (Film stand bei 0).
+            if (paused) {
+                since = SystemClock.elapsedRealtime()
+                videoHandler?.postDelayed(check, 200)
+                return@Runnable
+            }
             val waited = SystemClock.elapsedRealtime() - since
             // Daten kommen an bzw. die Tonausgabe wird gerade angelegt (Durchreichen: Soundbar stellt um) – mitwarten.
             if ((audioCollecting || audioPhase == PHASE_OPENING) && waited < AUDIO_START_MAX_MS) {
@@ -1823,6 +1867,8 @@ class DnaEngineCore(
         var pathInputs = 0
         var pathOutputs = 0
         var playingSinceMs = 0L
+        /** Vom vorigen Sender übernommene Tonausgabe (Durchreichen), siehe [ParkedOutput]. */
+        var reusedTrack: AudioTrack? = null
         fun releaseAll(park: Boolean = false) {
             // Erst die Uhr lösen, dann freigeben (sonst fragt die Anzeige eine freigegebene Tonausgabe ab).
             clock.audio = null
@@ -1875,7 +1921,7 @@ class DnaEngineCore(
         fun write(t: AudioTrack, data: ByteBuffer, ptsUs: Long, rate: Int) {
             if (firstPtsUs == Long.MIN_VALUE) {
                 firstPtsUs = ptsUs
-                clock.audio = AudioClock(t, rate, firstPtsUs)
+                clock.audio = AudioClock(t, rate, firstPtsUs, reused = t === reusedTrack)
                 clock.startFromAudio(firstPtsUs)
             }
             // Angehalten oder Vorrat leer: nicht weiter schreiben (AudioTrack ist pausiert).
@@ -2087,6 +2133,7 @@ class DnaEngineCore(
                                 outRate = f.sampleRate.takeIf { it > 0 } ?: 48_000
                                 val reused = if (tunnelActive) null else ParkedOutput.take(parkedKey(codec, f))
                                 if (reused != null) DnaLog.i(TAG, "Ton: Durchreichen vom vorigen Sender übernommen (Soundbar muss nicht umstellen)")
+                                reusedTrack = reused
                                 newTrack(reused ?: run {
                                     val openedAt = SystemClock.elapsedRealtime()
                                     createPassthroughTrack(codec, outRate, f.channels).also {
@@ -2352,7 +2399,7 @@ class DnaEngineCore(
     // ================================================================ Uhr
 
     /** Medienzeit aus dem Ton (was der Lautsprecher gerade spielt). Wirft nie. */
-    private class AudioClock(private val track: AudioTrack, private val rate: Int, private val firstPtsUs: Long) {
+    private class AudioClock(private val track: AudioTrack, private val rate: Int, private val firstPtsUs: Long, private val reused: Boolean = false) {
         private val stamp = AudioTimestamp()
         fun nowUs(speed: Float): Long? = try {
             setSpeedHint(speed)
@@ -2394,9 +2441,10 @@ class DnaEngineCore(
                 lastPollNanos = now
                 if (track.getTimestamp(stamp) && stamp.nanoTime > resumedNanos) {
                     val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                    // Auch der erste: Eine vom vorigen Sender übernommene Tonausgabe (Durchreichen) meldet auf manchen
-                    // Geräten nach dem Leeren noch die alte Zahl gespielter Proben – die Uhr spränge Minuten nach vorn.
-                    val plausible = kotlin.math.abs(stamp.framePosition - head) * 1_000_000L / rate < 5_000_000L
+                    // Der erste gilt sonst immer (manche Tonausgaben, etwa im Emulator, melden dauerhaft einen Abstand zum
+                    // Abspielkopf). Nur bei einer vom vorigen Sender übernommenen Tonausgabe (Durchreichen) muss auch er
+                    // passen: Manche Geräte melden nach dem Leeren noch die alte Zahl gespielter Proben.
+                    val plausible = (!hadStamp && !reused) || kotlin.math.abs(stamp.framePosition - head) * 1_000_000L / rate < 5_000_000L
                     if (plausible) {
                         hadStamp = true
                         stampFrames = stamp.framePosition
@@ -2743,6 +2791,7 @@ class DnaEngineCore(
         /** So lange wartet der Ton eines neuen Stroms höchstens, bis der vorige seine Tonausgabe abgegeben hat. */
         private const val PREVIOUS_AUDIO_WAIT_MS = 1_500L
         private const val PHASE_OPENING = "öffnet die Tonausgabe"
+        private const val STUCK_LOG_MS = 6_000L
         /** Prüfzeitraum der Ton-Uhr gegen die echte Zeit. */
         private const val CLOCK_CHECK_US = 4_000_000L
 

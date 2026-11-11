@@ -1112,6 +1112,7 @@ class DeviceTourTest {
                 mt?.let { android.os.Process.killProcess(it.pid) }
                 Thread.sleep(6_000)
                 val alive = scenario.read { it.player?.playbackState == Player.STATE_READY && it.player?.isPlaying == true && !it.isFinishing }
+                log("translator_killed: engine=${scenario.read { (it.player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.engineState() }}")
                 log("translator_killed: film_alive=$alive near_end_before=$nearEnd state=${scenario.read { it.player?.playbackState }} " +
                     "position=${scenario.read { it.player?.currentPosition }} status=${scenario.read { it.subtitleStatus }} statuses=${scenario.read { it.statusHistory.toList() }.takeLast(2)}")
                 assertTrue("Film lief nach Ende des Übersetzers nicht weiter", alive)
