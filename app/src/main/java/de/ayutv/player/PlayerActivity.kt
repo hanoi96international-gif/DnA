@@ -2624,33 +2624,41 @@ class PlayerActivity : ComponentActivity() {
     /** Bis zu zwei weitere Dateien derselben Suche laden und an der Spur messen; true, wenn eine übernommen wurde. */
     private suspend fun compareCandidates(language: String, references: List<Long>, current: Int): Boolean {
         val request = vod ?: return false
-        var best = current
-        repeat(de.ayutv.data.repo.OpenSubtitlesQuota.candidatesPerFilm - 1) {
-            if (externalLanguage != language || !container.subtitles.hasAlternatives(request.key, language)) return false
-            speechSyncInfo = "Vergleiche weitere Untertitel-Dateien mit der Spur des Films …"
-            val alternative = runCatching { container.subtitles.downloadAlternative(request.key, language, settings, filmInfo()) }
-                .onFailure { subLog("Weitere Datei nicht ladbar: ${it.message}") }.getOrNull() ?: return false
-            val cues = withContext(Dispatchers.IO) { parseCues(alternative.file) }
-            val (global, result) = withContext(Dispatchers.Default) { alignTo(references, cues.map { it.start }) }
-            // Ohne Zeilen-Abgleich (noch wenige Einblendungen) zählt die Gesamtlage – sonst stand jede Datei bei 0 %.
-            val percent = result?.percent ?: global?.let { SubtitleSync.coverage(references, cues.map { c -> c.start }, it) } ?: 0
-            subLog("Weitere Datei „${alternative.release}“ passt zu $percent % (bisher $best %)")
-            if (result != null && percent >= ELASTIC_MIN_PERCENT && percent >= best + 10 && externalLanguage == language) {
-                val file = container.subtitles.adoptAlternative(request.key, language, alternative)
-                subtitleFiles[language] = file
-                beginExternal(language, cues, null)
-                elasticTiming = result.timing
-                global?.let { subtitleTiming = it }
-                matchPercent = percent
-                syncedByReference = true
-                subtitleAutoSynced = true
-                subtitleStatus = "Andere Untertitel-Datei passt besser ($percent % statt $best %) – übernommen und Zeile für Zeile ausgerichtet"
-                return true
+        val wanted = de.ayutv.data.repo.OpenSubtitlesQuota.candidatesPerFilm - 1
+        if (wanted <= 0 || externalLanguage != language || !container.subtitles.hasAlternatives(request.key, language)) return false
+        speechSyncInfo = "Vergleiche weitere Untertitel-Dateien mit der Spur des Films …"
+        // Alle weiteren Treffer gleichzeitig laden und gleichzeitig vergleichen (früher eine nach der anderen).
+        val alternatives = container.subtitles.downloadAlternatives(request.key, language, settings, filmInfo(), wanted)
+        if (alternatives.isEmpty()) return false
+        class Scored(val alternative: de.ayutv.data.repo.SubtitleRepository.Alternative, val cues: List<TimedCue>,
+                     val global: SubtitleTiming?, val result: SubtitleAlign.Result?, val percent: Int)
+        val scored = withContext(Dispatchers.Default) {
+            alternatives.map { alt ->
+                val cues = parseCues(alt.file)
+                val (global, result) = alignTo(references, cues.map { it.start })
+                // Ohne Zeilen-Abgleich (noch wenige Einblendungen) zählt die Gesamtlage – sonst stand jede Datei bei 0 %.
+                val percent = result?.percent ?: global?.let { SubtitleSync.coverage(references, cues.map { c -> c.start }, it) } ?: 0
+                Scored(alt, cues, global, result, percent)
             }
-            container.subtitles.dropAlternative(alternative)
-            best = maxOf(best, percent)
         }
-        return false
+        scored.forEach { subLog("Weitere Datei „${it.alternative.release}“ passt zu ${it.percent} % (bisher $current %)") }
+        val best = scored.filter { it.result != null && it.percent >= ELASTIC_MIN_PERCENT && it.percent >= current + 10 }
+            .maxByOrNull { it.percent }
+        scored.filter { it !== best }.forEach { container.subtitles.dropAlternative(it.alternative) }
+        if (best == null || externalLanguage != language) {
+            best?.let { container.subtitles.dropAlternative(it.alternative) }
+            return false
+        }
+        val file = container.subtitles.adoptAlternative(request.key, language, best.alternative)
+        subtitleFiles[language] = file
+        beginExternal(language, best.cues, null)
+        elasticTiming = best.result!!.timing
+        best.global?.let { subtitleTiming = it }
+        matchPercent = best.percent
+        syncedByReference = true
+        subtitleAutoSynced = true
+        subtitleStatus = "Andere Untertitel-Datei passt besser (${best.percent} % statt $current %) – übernommen und Zeile für Zeile ausgerichtet"
+        return true
     }
 
     /** Untertitel früher (negativ) oder später (positiv) einblenden; wird pro Film gemerkt. */
@@ -3078,16 +3086,21 @@ class PlayerActivity : ComponentActivity() {
         // Schon geladene (aus der letzten Runde) mit dem jetzt längeren Ton neu bewerten.
         for ((_, cues) in alternatives) evaluations += withContext(Dispatchers.Default) { SpeechSync.evaluate(signal, cues.map { it.start to it.end }) }
         val limit = (de.ayutv.data.repo.OpenSubtitlesQuota.candidatesPerFilm - 1).coerceAtLeast(1)
-        while (alternatives.size < limit && SpeechSync.pickBest(evaluations) == null && externalLanguage == language && !subtitleAutoSynced) {
-            val alternative = runCatching { container.subtitles.downloadAlternative(request.key, language, settings, filmInfo()) }
-                .onFailure { describeOnlineProblem(it) }.getOrNull() ?: break
-            val cues = withContext(Dispatchers.IO) { parseCues(alternative.file) }
-            alternatives += alternative to cues
-            evaluations += withContext(Dispatchers.Default) { SpeechSync.evaluate(signal, cues.map { it.start to it.end }) }
-            subLog("Vergleich: „${alternative.release}“ Güte ${evaluations.last()?.z?.let { "%.1f".format(Locale.ROOT, it) } ?: "–"}" +
-                " (geladene Datei ${current?.z?.let { "%.1f".format(Locale.ROOT, it) } ?: "–"})")
-            // Schon eindeutig vorn: keine weiteren Downloads verbrauchen.
-            if (SpeechSync.pickBest(evaluations) == evaluations.lastIndex) break
+        // Noch keine klar vorn: alle fehlenden weiteren Treffer gleichzeitig laden und bewerten (früher nacheinander).
+        if (alternatives.size < limit && SpeechSync.pickBest(evaluations) == null && externalLanguage == language && !subtitleAutoSynced) {
+            val loaded = container.subtitles.downloadAlternatives(request.key, language, settings, filmInfo(), limit - alternatives.size)
+            val parsed = withContext(Dispatchers.Default) {
+                loaded.map { alt ->
+                    val cues = parseCues(alt.file)
+                    Triple(alt, cues, SpeechSync.evaluate(signal, cues.map { it.start to it.end }))
+                }
+            }
+            for ((alternative, cues, evaluation) in parsed) {
+                alternatives += alternative to cues
+                evaluations += evaluation
+                subLog("Vergleich: „${alternative.release}“ Güte ${evaluation?.z?.let { "%.1f".format(Locale.ROOT, it) } ?: "–"}" +
+                    " (geladene Datei ${current?.z?.let { "%.1f".format(Locale.ROOT, it) } ?: "–"})")
+            }
         }
         val best = SpeechSync.pickBest(evaluations)
         val compared = alternatives.size

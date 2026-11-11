@@ -352,12 +352,8 @@ class SubtitleRepository(
      */
     suspend fun downloadAlternative(key: String, language: String, settings: AppSettings, film: FilmInfo): Alternative? = withContext(Dispatchers.IO) {
         val apiKey = settings.openSubtitlesApiKey.ifEmpty { return@withContext null }
-        val list = altFile(key, language)
         while (true) {
-            val lines = runCatching { list.readLines().filter { it.isNotBlank() } }.getOrDefault(emptyList())
-            val next = lines.firstOrNull() ?: return@withContext null
-            runCatching { list.writeText(lines.drop(1).joinToString("") { "$it\n" }) }
-            val parts = next.split('\t')
+            val parts = popAlternative(key, language) ?: return@withContext null
             val fileId = parts[0].toLongOrNull() ?: continue
             if (fileId in badFileIds(key, language)) continue
             val link = downloadLink(apiKey, fileId, settings) ?: return@withContext null
@@ -379,6 +375,28 @@ class SubtitleRepository(
         }
         null
     }
+
+    private val alternativesLock = Mutex()
+
+    /** Nächster noch nicht geprüfter Treffer aus der Liste (mehrere Downloads gleichzeitig greifen nie denselben). */
+    private suspend fun popAlternative(key: String, language: String): List<String>? = alternativesLock.withLock {
+        val list = altFile(key, language)
+        val lines = runCatching { list.readLines().filter { it.isNotBlank() } }.getOrDefault(emptyList())
+        val next = lines.firstOrNull() ?: return@withLock null
+        runCatching { list.writeText(lines.drop(1).joinToString("") { "$it\n" }) }
+        next.split('\t')
+    }
+
+    /**
+     * Bis zu [count] weitere Treffer gleichzeitig laden (statt nacheinander): Der Vergleich am Film kann dann alle auf
+     * einmal prüfen – die richtige Datei ist Sekunden früher da.
+     */
+    suspend fun downloadAlternatives(key: String, language: String, settings: AppSettings, film: FilmInfo, count: Int): List<Alternative> =
+        kotlinx.coroutines.coroutineScope {
+            (0 until count.coerceAtLeast(0)).map {
+                async { runCatching { downloadAlternative(key, language, settings, film) }.onFailure { e -> Log.w(TAG, "Weitere Datei: ${e.message}") }.getOrNull() }
+            }.map { it.await() }.filterNotNull()
+        }
 
     /** Die weitere Datei passt besser: Sie wird die gespeicherte, die bisherige kommt nie wieder. */
     fun adoptAlternative(key: String, language: String, alternative: Alternative): File {
