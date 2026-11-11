@@ -68,7 +68,7 @@ class HttpByteSource(
     private val http: OkHttpClient,
     private val url: String,
     private val userAgent: String?,
-    private val retries: Int = 6,
+    private val retries: Int = 10,
 ) : ByteSource {
     override var length: Long = -1
         private set
@@ -145,7 +145,9 @@ class HttpByteSource(
                 if (closed) throw e
                 closeInput()
                 if (Thread.currentThread().isInterrupted || ++failures > retries) throw e
-                Thread.sleep(minOf(300L * failures, 2_000L))
+                // Anbieter mit nur einer Verbindung geben die alte oft erst nach Sekunden frei (sonst HTTP 509/403):
+                // geduldig weiter versuchen statt den Film abzubrechen (dann setzte die App neu an).
+                Thread.sleep(minOf(400L * failures, 3_000L))
             }
         }
     }
