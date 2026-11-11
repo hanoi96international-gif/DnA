@@ -380,7 +380,10 @@ class DnaEngineCore(
         val base = when {
             !live || !config.liveCatchUp -> config.startBufferUs
             stalls == 0 -> minOf(config.startBufferUs, LIVE_FAST_START_US)
-            else -> minOf(config.startBufferUs * (2 + stalls) / 2, 5_000_000L)
+            // Sender mit Hängern (meist trennt der Anbieter die Verbindung): trotzdem schnell starten – höchstens
+            // [LIVE_START_MAX_US]. Den größeren Vorrat baut das Tempo (leicht langsamer) während der Wiedergabe auf;
+            // früher wartete jedes Umschalten auf solche Sender bis zu 5 s.
+            else -> minOf(config.startBufferUs * (2 + stalls) / 2, LIVE_START_MAX_US)
         }
         // 4K (hohe Datenrate): mehr Vorlauf – jede Schwankung der Leitung kostet dort viel mehr Sekunden Bild.
         return if (highBitrate) maxOf(base, UHD_START_US) else base
@@ -2530,6 +2533,8 @@ class DnaEngineCore(
         private const val LIVE_REBUFFER_US = 1_500_000L
         /** Live ohne bekannte Hänger: Start ab so viel Vorrat (schnelles Umschalten). */
         private const val LIVE_FAST_START_US = 800_000L
+        /** Live-Start nach Hängern: höchstens so viel Vorrat vor dem Start (Rest baut das Tempo auf). */
+        private const val LIVE_START_MAX_US = 1_500_000L
         /** Ab dieser Datenrate des Bildes gilt ein Strom als 4K (Mbit/s). */
         private const val UHD_MBIT = 14.0
         /** 4K: Start- und Nachlade-Vorrat mindestens so groß. */
