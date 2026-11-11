@@ -212,6 +212,9 @@ class DnaEngineCore(
         streamKey = url
         stalls = if (live) synchronized(stallMemory) { stallMemory[url] ?: 0 } else 0
         highBitrate = false
+        resetStreamFps()
+        openedAtMs = SystemClock.elapsedRealtime()
+        startMarks.clear()
         rateBytes = 0
         rateFirstUs = Long.MIN_VALUE
         rateMeasured = false
@@ -396,6 +399,54 @@ class DnaEngineCore(
     private var rateBytes = 0L
     private var rateFirstUs = Long.MIN_VALUE
     @Volatile private var rateMeasured = false
+
+    // ---------------------------------------------------------------- Startzeit in Abschnitten (für den Kurzbericht)
+
+    @Volatile private var openedAtMs = 0L
+    private val startMarks = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /** Einmal je Stream: wie lange seit open() bis [what] (Verbindung, erste Daten, erstes Bild, Ton läuft). */
+    private fun startMark(what: String) {
+        val opened = openedAtMs
+        if (opened == 0L || !startMarks.add(what)) return
+        DnaLog.i(TAG, "Start: $what nach ${SystemClock.elapsedRealtime() - opened} ms")
+    }
+
+    /**
+     * Bildrate des Stroms aus den Zeitstempeln der Bilder (0 = noch unbekannt). Genauer als gezeigte Bilder zu zählen:
+     * Verworfene oder vor dem ersten Schlüsselbild übersprungene Bilder ließen 25 fps wie 24 aussehen – der Fernseher
+     * schaltete dann auf den falschen Modus oder blieb bei 60 Hz.
+     */
+    @Volatile var streamFrameRate = 0f
+        private set
+    private var fpsCount = 0
+    private var fpsMinUs = Long.MAX_VALUE
+    private var fpsMaxUs = Long.MIN_VALUE
+
+    private fun resetStreamFps() {
+        streamFrameRate = 0f
+        fpsCount = 0
+        fpsMinUs = Long.MAX_VALUE
+        fpsMaxUs = Long.MIN_VALUE
+    }
+
+    private fun noteStreamFps(timeUs: Long) {
+        if (streamFrameRate > 0f) return
+        // Sprung (Neuverbindung, Spulen): neu zählen.
+        if (fpsCount > 0 && (timeUs < fpsMinUs - 2_000_000 || timeUs > fpsMaxUs + 2_000_000)) resetStreamFps()
+        fpsCount++
+        fpsMinUs = minOf(fpsMinUs, timeUs)
+        fpsMaxUs = maxOf(fpsMaxUs, timeUs)
+        val span = fpsMaxUs - fpsMinUs
+        // Über mindestens 3 s (B-Bilder kommen umsortiert, die Spanne stimmt trotzdem).
+        if (fpsCount < 60 || span < 3_000_000) return
+        val fps = ((fpsCount - 1) * 1_000_000.0 / span).toFloat()
+        val rounded = listOf(23.976f, 24f, 25f, 29.97f, 30f, 48f, 50f, 59.94f, 60f).minBy { kotlin.math.abs(it - fps) }
+        if (kotlin.math.abs(rounded - fps) / rounded < 0.03f) {
+            streamFrameRate = rounded
+            DnaLog.i(TAG, "Bildrate des Stroms: ${"%.2f".format(fps)} → $rounded fps")
+        } else resetStreamFps()
+    }
 
     private fun noteVideoRate(sample: Sample) {
         if (rateMeasured) return
@@ -677,7 +728,11 @@ class DnaEngineCore(
                 audioTap?.let { tap -> runCatching { tap(sample) } }
             }
         }
-        if (track.codec.kind == Kind.VIDEO) noteVideoRate(sample)
+        if (track.codec.kind == Kind.VIDEO) {
+            if (sample.keyframe) startMark("erstes Schlüsselbild empfangen") else startMark("erste Bilddaten")
+            noteVideoRate(sample)
+            noteStreamFps(sample.timeUs)
+        }
         synchronized(lock) {
             if (track.codec.kind == Kind.VIDEO) videoQueue.addLast(sample) else audioQueue.addLast(sample)
             queuedBytes += sample.data.size
@@ -1152,6 +1207,7 @@ class DnaEngineCore(
                 DnaLog.i(TAG, "FFmpeg-Software: erstes Bild gezeigt (${frame.width}×${frame.height}, ${if (frame.transfer == 16) "HDR10 → SDR" else "SDR"})")
                 if (videoStartUs == Long.MIN_VALUE) videoStartUs = ptsUs
                 listener.onFirstFrame()
+                startMark("erstes Bild gezeigt")
                 if (!audioPlayable) setBuffering(false)
                 else awaitAudioStart(gen)
             }
@@ -1192,6 +1248,7 @@ class DnaEngineCore(
                 if (videoStartUs == Long.MIN_VALUE) videoStartUs = ptsUs
                 videoFailures = 0
                 listener.onFirstFrame()
+                startMark("erstes Bild gezeigt")
             }
         }
 
@@ -1611,6 +1668,7 @@ class DnaEngineCore(
                         rememberVariant(name, variant)
                         rememberHardware(softwareKey(config), failed = false)
                         listener.onFirstFrame()
+                        startMark("erstes Bild gezeigt")
                         if (!audioPlayable) setBuffering(false)
                         else awaitAudioStart(gen)
                     }
@@ -1769,6 +1827,7 @@ class DnaEngineCore(
                 if (!started) {
                     started = true
                     audioStarted = true
+                    startMark("Ton läuft")
                     setBuffering(false)
                 }
             }

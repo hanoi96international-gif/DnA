@@ -34,7 +34,9 @@ class LiveTimeshift(
     /** Höchstens so weit zurück (ms). */
     private val maxBackMs: Long,
 ) : Closeable {
-    private val http = upstream.newBuilder().readTimeout(20, TimeUnit.SECONDS).build()
+    // Live liefert ständig Daten: Kommt [SILENT_SECONDS] lang nichts, hängt die Verbindung – neu verbinden. Mit 20 s war
+    // der Vorrat der Engine längst leer, bevor die Aufzeichnung es merkte (Bild stand).
+    private val http = upstream.newBuilder().readTimeout(SILENT_SECONDS, TimeUnit.SECONDS).build()
     private val file = File(dir, "dna-timeshift-${System.nanoTime()}.ts")
     private val writer = RandomAccessFile(file, "rw")
     private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
@@ -90,6 +92,9 @@ class LiveTimeshift(
     private fun record() {
         var failures = 0
         val buffer = ByteArray(64 * 1024)
+        /** Zeitpunkt des letzten Abrisses (für die Dauer bis wieder Daten kommen), 0 = verbunden. */
+        var droppedAt = 0L
+        var reconnects = 0
         while (!closed) {
             try {
                 val current = http.newCall(Request.Builder().url(source).apply { userAgent?.let { header("User-Agent", it) } }.build())
@@ -102,9 +107,15 @@ class LiveTimeshift(
                         val n = input.read(buffer)
                         if (n < 0) {
                             if (!closed) runCatching { onDrop?.invoke("Anbieter hat die Verbindung beendet") }
+                            if (droppedAt == 0L) droppedAt = SystemClock.elapsedRealtime()
                             break
                         }
                         if (n == 0) continue
+                        if (droppedAt != 0L) {
+                            reconnects++
+                            DnaLog.i(TAG, "Anbieter: wieder Daten nach ${SystemClock.elapsedRealtime() - droppedAt} ms ($reconnects. Neuverbindung, ${failures} Fehlversuche)")
+                            droppedAt = 0L
+                        }
                         write(buffer, n)
                         failures = 0
                     }
@@ -112,11 +123,14 @@ class LiveTimeshift(
             } catch (e: Exception) {
                 if (closed) break
                 lastError = e.message ?: e.javaClass.simpleName
+                if (droppedAt == 0L) droppedAt = SystemClock.elapsedRealtime()
                 failures++
                 runCatching { onDrop?.invoke(if (e is java.net.SocketTimeoutException) "Zeitüberschreitung (keine Daten)" else "Verbindung unterbrochen: $lastError") }
                 Log.w(TAG, "Aufzeichnung unterbrochen ($failures): $lastError")
             }
-            if (!closed) Thread.sleep(minOf(500L * failures, 5_000L))
+            // Erster neuer Versuch sofort, danach kurz steigend: Anbieter mit nur einer Verbindung geben die alte oft
+            // erst nach 1–2 s frei (bis dahin HTTP 509/403) – lange Pausen kosten hier nur Vorrat.
+            if (!closed) Thread.sleep(minOf(300L * failures, 2_000L))
         }
     }
 
@@ -196,6 +210,8 @@ class LiveTimeshift(
 
     companion object {
         private const val TAG = "AyuDnaTs"
+        /** So lange ohne Daten gilt die Verbindung zum Anbieter als hängend (Live). */
+        private const val SILENT_SECONDS = 6L
         private const val TS_PACKET = 188L
         /** Abstand zum Schreibkopf, damit die Engine nicht im gerade überschriebenen Bereich liest. */
         private const val KEEP_FREE = 8L * 1024 * 1024

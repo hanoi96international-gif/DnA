@@ -1098,6 +1098,13 @@ class DeviceTourTest {
                         "statuses=${scenario.read { it.statusHistory.toList() }.takeLast(4)}"
                 )
                 assertTrue("Bild-Untertitel nicht übersetzt", ok)
+                // Der Testfilm ist nur gut 2 Minuten lang; dauerte die erste Übersetzung im Emulator lange, ist er fast zu Ende
+                // (dann hieße „läuft nicht mehr“ nur „Film zu Ende“). Vorher an den Anfang.
+                val nearEnd = scenario.read { a -> a.player?.let { it.duration > 0 && it.duration - it.currentPosition < 40_000 } == true }
+                if (nearEnd) {
+                    scenario.onActivity { it.player?.seekTo(0) }
+                    waitFor(15_000) { scenario.read { it.player?.playbackState == Player.STATE_READY && it.player?.isPlaying == true } }
+                }
                 // Übersetzer-Prozess hart beenden (wie bei Speichermangel): Der Film muss weiterlaufen.
                 val am = app.getSystemService(android.app.ActivityManager::class.java)
                 val mt = am.runningAppProcesses.orEmpty().firstOrNull { it.processName.endsWith(":mt") }
@@ -1105,7 +1112,8 @@ class DeviceTourTest {
                 mt?.let { android.os.Process.killProcess(it.pid) }
                 Thread.sleep(6_000)
                 val alive = scenario.read { it.player?.playbackState == Player.STATE_READY && it.player?.isPlaying == true && !it.isFinishing }
-                log("translator_killed: film_alive=$alive status=${scenario.read { it.subtitleStatus }} statuses=${scenario.read { it.statusHistory.toList() }.takeLast(2)}")
+                log("translator_killed: film_alive=$alive near_end_before=$nearEnd state=${scenario.read { it.player?.playbackState }} " +
+                    "position=${scenario.read { it.player?.currentPosition }} status=${scenario.read { it.subtitleStatus }} statuses=${scenario.read { it.statusHistory.toList() }.takeLast(2)}")
                 assertTrue("Film lief nach Ende des Übersetzers nicht weiter", alive)
                 assertTrue("Übersetzer lief nicht im eigenen Prozess", mt != null)
                 // Danach übersetzt er von selbst weiter (Neustart mit Zeit zum Modell-Laden), statt aufzugeben.
@@ -1505,6 +1513,10 @@ class DeviceTourTest {
             try {
                 val engine = waitFor(10_000) { dnaEngine() }
                 val video = waitFor(20_000) { dnaPicture() }
+                // Erstes Bild ≠ läuft: Seit 0.61.9 wartet das Bild auf den Ton (gemeinsamer Start). Gemessen wird ab dann,
+                // wenn die Wiedergabe wirklich läuft, und nach einer Sekunde Anlauf.
+                waitFor(15_000) { scenario.read { it.player?.playbackState == Player.STATE_READY && it.player?.isPlaying == true } }
+                Thread.sleep(1_000)
                 val (p0, r0, d0) = dnaStats()
                 Thread.sleep(5_000)
                 val (p1, r1, d1) = dnaStats()
@@ -1589,6 +1601,13 @@ class DeviceTourTest {
                 val (position, rendered, dropped) = dnaStats()
                 shot("99_dna_engine_4k")
                 log("dna_engine_4k: shown=$shown position_ms=$position advanced_ms=${position - p0} rendered=${rendered - r0} dropped=$dropped info=${dnaInfo()} ${engineInfo()}")
+                // Fernseher ohne 4K-HEVC-Decoder (Emulator): Der eigene Software-Decoder ist auf TV-Geräten bewusst aus
+                // (Stick hing sonst). Erwartet ist dann eine klare Meldung statt eines Bildes.
+                val tv = app.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+                if (!shown && tv && "scheitern an" in dnaInfo()) {
+                    log("dna_engine_4k: TV-Gerät ohne 4K-Decoder – klare Meldung statt Bild")
+                    return@section
+                }
                 assertTrue("4K: kein Bild (${dnaInfo()})", shown)
                 assertTrue("4K: Bild steht (${rendered - r0} Bilder in 5 s)", rendered - r0 > 0)
                 assertTrue("4K: Uhr steht (${position - p0} ms in 5 s)", position - p0 > 2_000)
@@ -1609,7 +1628,10 @@ class DeviceTourTest {
             log("uhd_selftest: done=$done result=$result")
             Thread.sleep(9_000)
             assertTrue("4K-Test ohne Ergebnis", done)
-            assertTrue("4K-Test: $result", result?.startsWith("✗") == false)
+            val tv = app.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+            // TV ohne 4K-Decoder: ein klares „✗ … scheitern an …“ ist das richtige Ergebnis.
+            val clearNo = tv && result?.startsWith("✗") == true && "scheitern an" in result
+            assertTrue("4K-Test: $result", result?.startsWith("✗") == false || clearNo)
         }
 
         log("done failures=$failures")

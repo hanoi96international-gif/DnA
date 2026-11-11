@@ -5,6 +5,7 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import kotlin.math.abs
 
 /**
@@ -49,9 +50,10 @@ class FrameRateMatcher(private val activity: Activity) {
         val display = activity.windowManager.defaultDisplay ?: return false
         // Hat das System den letzten Wechsel nicht ausgeführt, nicht bei jedem Sender erneut 5 s pausieren.
         // Kam der Modus doch noch (Fernseher war nur langsam), gilt es wieder.
+        // Nur kurz und nur für diesen einen Modus: Früher blieb die Anpassung nach einem einzigen nicht ausgeführten
+        // Wechsel (Fernseher/Soundbar langsam) bis zum App-Neustart aus – danach liefen viele Sender auf 60 Hz.
         if (ignoredModeId != 0) {
-            if (display.mode.modeId != ignoredModeId) return false
-            ignoredModeId = 0
+            if (display.mode.modeId == ignoredModeId || SystemClock.elapsedRealtime() - ignoredAtMs > IGNORE_MS) ignoredModeId = 0
         }
         val modes = display.supportedModes.map { DisplayModeInfo(it.modeId, it.physicalWidth, it.physicalHeight, it.refreshRate) }
         val current = display.mode
@@ -59,7 +61,7 @@ class FrameRateMatcher(private val activity: Activity) {
             ?: return false
         // Für die Menüs merken (nur 50/60 Hz, bei 24 Hz liefe die Oberfläche ruckelig).
         modes.firstOrNull { it.id == best }?.takeIf { it.refreshRate >= 47f }?.let { keptModeId = best }
-        if (best == current.modeId || best == requestedModeId) return false
+        if (best == current.modeId || best == requestedModeId || best == ignoredModeId) return false
         requestedModeId = best
         startSwitch(best)
         val attributes = activity.window.attributes
@@ -80,8 +82,15 @@ class FrameRateMatcher(private val activity: Activity) {
          */
         @Volatile var keptModeId = 0
 
-        /** Modus, den das System zuletzt nicht eingestellt hat (0 = keiner). Gilt bis zum App-Neustart oder Umschalten der Einstellung. */
+        /**
+         * Modus, den das System zweimal hintereinander nicht eingestellt hat (0 = keiner): für [IGNORE_MS] nicht erneut
+         * anfordern (sonst bei jedem Sender 5 s Pause). Andere Modi bleiben erlaubt.
+         */
         @Volatile var ignoredModeId = 0
+        @Volatile private var ignoredAtMs = 0L
+        /** Nicht ausgeführte Wechsel in Folge (ein langsamer Fernseher allein sperrt noch nichts). */
+        @Volatile private var misses = 0
+        private const val IGNORE_MS = 10 * 60_000L
 
         /** In [activity] (Menüs) den gemerkten Modus anfordern, oder mit [enabled] = false wieder den Standard. */
         fun applyKept(activity: Activity, enabled: Boolean) {
@@ -132,6 +141,7 @@ class FrameRateMatcher(private val activity: Activity) {
             override fun onDisplayRemoved(id: Int) = Unit
             override fun onDisplayChanged(id: Int) {
                 if (id != displayId || activity.windowManager.defaultDisplay.mode.modeId != modeId) return
+                misses = 0
                 // Modus steht, der Fernseher braucht aber noch einen Moment für das neue HDMI-Signal.
                 timeout?.let { handler.removeCallbacks(it) }
                 handler.postDelayed({ finishSwitch() }, Timing.SETTLE_MS)
@@ -142,10 +152,17 @@ class FrameRateMatcher(private val activity: Activity) {
         // Manche Geräte melden den Wechsel nicht (oder lehnen ihn ab): spätestens dann weiterspielen.
         val t = Runnable {
             if (activity.windowManager.defaultDisplay.mode.modeId != modeId) {
-                ignoredModeId = modeId
-                keptModeId = 0
-                onIgnored()
-            }
+                misses++
+                // Erst beim zweiten Mal in Folge als „schaltet nicht um“ werten (Hinweis, kurze Sperre dieses Modus).
+                if (misses >= 2) {
+                    ignoredModeId = modeId
+                    ignoredAtMs = SystemClock.elapsedRealtime()
+                    keptModeId = 0
+                    onIgnored()
+                }
+                // Nicht gleich wieder denselben Modus anfordern; beim nächsten Sender neu versuchen.
+                requestedModeId = 0
+            } else misses = 0
             finishSwitch()
         }
         timeout = t

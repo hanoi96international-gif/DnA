@@ -260,7 +260,7 @@ class DnaReader(private val http: OkHttpClient, private val config: Config, priv
                         // 509 / 429 / 5xx: kurzer Backoff, dann neu versuchen (Provider-Limits / temporäre Fehler)
                         if (code in setOf(509, 429) || code in 500..599) {
                             DnaLog.w(TAG, "HTTP $code – warte kurz und verbinde neu")
-                            Thread.sleep(if (code == 509) 4500L else if (code == 429) 2500L else 1200L)
+                            Thread.sleep(if (code == 509) 1500L else if (code == 429) 2500L else 1200L)
                         }
                         throw IOException("HTTP $code")
                     }
