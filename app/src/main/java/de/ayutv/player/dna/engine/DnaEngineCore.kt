@@ -180,7 +180,14 @@ class DnaEngineCore(
 
     /** Medienzeit (µs) der Wiedergabe. */
     val positionUs: Long
-        get() = if (!clock.started) seekTargetUs else clock.nowUs().coerceAtLeast(0)
+        get() = when {
+            !clock.started -> seekTargetUs
+            // Hauptthread (Player-Takt, Fortschrittsanzeigen): den zuletzt von Bild/Ton berechneten Wert weiterrechnen.
+            // Die Uhr fragt sonst die Tonausgabe ab (Systemaufruf, auf dem Fire TV teils 75 ms) und sperrte die Bedienung.
+            android.os.Looper.myLooper() == android.os.Looper.getMainLooper() && !paused && !buffering ->
+                (clock.recentUs() ?: clock.nowUs()).coerceAtLeast(0)
+            else -> clock.nowUs().coerceAtLeast(0)
+        }
 
     /** Vorrat in µs ab der Wiedergabestelle. */
     val bufferedUs: Long get() = synchronized(lock) { bufferedAheadLocked() }
@@ -2407,6 +2414,7 @@ class DnaEngineCore(
         @Volatile private var speed = 1f
 
         fun reset() {
+            lastUs = Long.MIN_VALUE
             started = false
             firstUs = Long.MIN_VALUE
             audio = null
@@ -2416,6 +2424,7 @@ class DnaEngineCore(
         private fun realtimeUs() = SystemClock.elapsedRealtimeNanos() / 1000
 
         @Synchronized fun startFromVideo(ptsUs: Long, hasAudio: Boolean) {
+            lastUs = Long.MIN_VALUE
             if (started) return
             // Mit Ton etwas Vorlauf lassen, bis der Ton anläuft.
             anchorUs = ptsUs - if (hasAudio) 150_000 else 0
@@ -2426,6 +2435,7 @@ class DnaEngineCore(
         }
 
         @Synchronized fun startFromAudio(ptsUs: Long) {
+            lastUs = Long.MIN_VALUE
             if (started) return
             anchorUs = ptsUs
             anchorRealtime = realtimeUs()
@@ -2456,12 +2466,37 @@ class DnaEngineCore(
         }
 
         fun nowUs(): Long {
+            val us = computeNowUs()
+            lastUs = us
+            lastNanos = System.nanoTime()
+            lastRunning = pausedAt == 0L
+            lastSpeed = speed
+            return us
+        }
+
+        private fun computeNowUs(): Long {
             if (!audioDistrusted) audio?.nowUs(speed)?.let { us ->
                 if (pausedAt == 0L) verify(us)
                 if (!audioDistrusted) return smooth(us)
             }
             val now = if (pausedAt > 0) pausedAt else realtimeUs()
             return anchorUs + ((now - anchorRealtime) * speed).toLong()
+        }
+
+        // Zuletzt berechnete Uhrzeit (die Bild-/Ton-Threads fragen ständig): für den Hauptthread, ohne Sperre und ohne
+        // Systemaufruf an die Tonausgabe.
+        @Volatile private var lastUs = Long.MIN_VALUE
+        @Volatile private var lastNanos = 0L
+        @Volatile private var lastRunning = false
+        @Volatile private var lastSpeed = 1f
+
+        /** Aus dem letzten Wert weitergerechnet; null, wenn er älter als [maxAgeMs] ist. */
+        fun recentUs(maxAgeMs: Long = 250): Long? {
+            val us = lastUs
+            if (us == Long.MIN_VALUE) return null
+            val ageNs = System.nanoTime() - lastNanos
+            if (ageNs > maxAgeMs * 1_000_000) return null
+            return if (lastRunning) us + (ageNs / 1000 * lastSpeed).toLong() else us
         }
 
         // Geglättete Ton-Uhr: läuft im Takt der echten Zeit und wird sanft an die Messwerte der Tonausgabe herangeführt.
