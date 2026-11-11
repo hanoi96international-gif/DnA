@@ -51,6 +51,11 @@ for i in $(seq 1 25); do key KEYCODE_DPAD_DOWN; done; sleep 1
 key KEYCODE_DPAD_RIGHT; sleep 1
 for i in $(seq 1 40); do key KEYCODE_DPAD_DOWN; done; sleep 1
 adb exec-out screencap -p > ci-out/release_live.png
+# Release-APK (R8) auch abspielen lassen: Sender öffnen, Bild und Ton der DNA Engine im Protokoll festhalten.
+key KEYCODE_DPAD_CENTER; sleep 12
+adb exec-out screencap -p > ci-out/release_play.png
+adb logcat -d -v time DnaEngine:I DnaEnginePlayer:I AndroidRuntime:E DEBUG:F libc:F '*:S' > ci-out/release_play.txt 2>&1 || true
+key KEYCODE_BACK; sleep 2
 for i in $(seq 1 20); do key KEYCODE_DPAD_UP; done; sleep 1
 adb shell dumpsys gfxinfo de.ayutv > ci-out/release_gfxinfo_live.txt 2>&1 || true
 adb shell dumpsys gfxinfo de.ayutv reset >/dev/null
@@ -67,4 +72,6 @@ adb logcat -d -v time AndroidRuntime:E '*:S' > ci-out/release_crash.txt 2>&1 || 
 status=0
 grep -q "^OK (" ci-out/instrument.txt || { echo "::error::Rundgang im Emulator fehlgeschlagen (siehe results.txt)"; status=1; }
 grep -q "FATAL EXCEPTION" ci-out/release_crash.txt && { echo "::error::Release-APK abgestürzt"; status=1; }
+grep -qE "FATAL EXCEPTION|Fatal signal" ci-out/release_play.txt && { echo "::error::Release-APK beim Abspielen abgestürzt"; status=1; }
+grep -E "erstes Bild gezeigt|Ton läuft|Neuer Stream" ci-out/release_play.txt | head -5 || true
 exit $status

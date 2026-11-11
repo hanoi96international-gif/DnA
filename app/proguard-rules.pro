@@ -1,3 +1,11 @@
+# Optimieren und Unbenutztes entfernen, aber nichts umbenennen: Fehlerberichte und Abstürze bleiben lesbar
+# (Klassen, Methoden, Zeilen), und alles, was per JNI oder über Namen gefunden wird, behält seinen Namen.
+-dontobfuscate
+-keepattributes SourceFile,LineNumberTable
+
+# DNA Engine: eigene Bild- und Ton-Decoder (JNI).
+-keepclasseswithmembers class de.ayutv.player.dna.engine.** { native <methods>; }
+
 # Room, Media3, OkHttp und kotlinx.serialization bringen eigene Regeln mit.
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**

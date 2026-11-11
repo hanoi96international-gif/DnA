@@ -38,7 +38,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 an (ohne Umbenennen, siehe proguard-rules.pro): Compose entfernt erst damit seine Mess- und
+            // Quelltext-Aufrufe in jeder Bildschirm-Funktion – ohne lief die Oberfläche auf dem Fire TV spürbar zäher.
+            isMinifyEnabled = true
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
