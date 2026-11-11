@@ -103,8 +103,53 @@ object UiPerformance {
     private var thread: HandlerThread? = null
     private val listeners = HashMap<Window, Window.OnFrameMetricsAvailableListener>()
 
+    // ------------------------------------------------------------------ Lange Aufgaben auf dem Hauptthread
+
+    /**
+     * Was den Hauptthread länger als [LONG_TASK_MS] belegt (Handler und Aufgabe, wie Android sie benennt). Langsame Bilder
+     * warten im Mittel ~30 ms darauf (Kurzbericht 11.11.): Diese Liste zeigt, welche Arbeit dort nicht hingehört.
+     */
+    private val longTasks = java.util.concurrent.ConcurrentHashMap<String, LongArray>()
+    @Volatile private var mainWatched = false
+    private var taskStartNs = 0L
+    private var taskName: String? = null
+
+    private fun watchMainThread() {
+        if (mainWatched) return
+        mainWatched = true
+        android.os.Looper.getMainLooper().setMessageLogging { line ->
+            if (line.startsWith(">>>>> Dispatching")) {
+                taskStartNs = System.nanoTime()
+                taskName = line
+            } else if (line.startsWith("<<<<< Finished") && taskStartNs != 0L) {
+                val ms = (System.nanoTime() - taskStartNs) / 1_000_000
+                taskStartNs = 0L
+                // Bilder selbst (Choreographer) zählen schon oben; hier nur, was dazwischen den Hauptthread belegt.
+                if (ms >= LONG_TASK_MS && "Choreographer" !in taskName.orEmpty() && !runCatching { busy() }.getOrDefault(false)) {
+                    // „>>>>> Dispatching to Handler (android.view.Choreographer$FrameHandler) {…} android.view.Choreographer$FrameDisplayEventReceiver@…: 0“
+                    val name = taskName.orEmpty().substringAfter("Handler (").let { h ->
+                        val handler = h.substringBefore(')').substringAfterLast('.')
+                        val callback = h.substringAfter("} ", "").substringBefore('@').substringBefore(':').substringAfterLast('.')
+                        "$handler/$callback"
+                    }.take(80)
+                    val entry = longTasks.getOrPut(name) { LongArray(2) }
+                    synchronized(entry) { entry[0]++; entry[1] += ms }
+                    if (longTasks.size > 60) longTasks.keys.firstOrNull()?.let { longTasks.remove(it) }
+                }
+            }
+        }
+    }
+
+    /** Die Aufgaben, die den Hauptthread am längsten belegt haben (Anzahl × Mittel). */
+    private fun longTasksText(): String? {
+        val top = longTasks.entries.sortedByDescending { it.value[1] }.take(4)
+        if (top.isEmpty()) return null
+        return "Hauptthread lange belegt durch: " + top.joinToString(", ") { (name, v) -> "$name ${v[0]}× (Ø ${v[1] / maxOf(1, v[0])} ms)" }
+    }
+
     /** Dauer jedes gezeichneten Bildes der Menüs mitzählen (kostet nichts, solange nichts gezeichnet wird). */
     fun watch(activity: Activity) {
+        watchMainThread()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
         val window = activity.window
         if (window in listeners) return
@@ -151,9 +196,11 @@ object UiPerformance {
                 "$name " + String.format(java.util.Locale.GERMAN, "%.0f %%", c.slow.get() * 100.0 / c.frames.get()) + " über ${SLOW_MS} ms"
             }
         return parts.joinToString(" · ") + (if (worst.isNotEmpty()) " · am langsamsten: $worst" else "") +
-            (if (reduced) " (weniger Bewegung aktiv)" else "") + (SlowParts.text()?.let { " · $it" } ?: "")
+            (if (reduced) " (weniger Bewegung aktiv)" else "") + (SlowParts.text()?.let { " · $it" } ?: "") +
+            (longTasksText()?.let { " · $it" } ?: "")
     }
 
     private const val SLOW_MS = 25L
+    private const val LONG_TASK_MS = 30L
     private const val VERY_SLOW_MS = 50L
 }
