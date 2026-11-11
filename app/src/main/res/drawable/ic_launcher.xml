@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#0B0F14" android:pathData="M18,0h72a18,18 0,0 1,18 18v72a18,18 0,0 1,-18 18h-72a18,18 0,0 1,-18 -18v-72a18,18 0,0 1,18 -18z" />
+    <!-- Schriftzug "DnA" (Inter ExtraBold, SIL Open Font License) -->
+    <path android:fillColor="#3DA9FC" android:pathData="M24.55 68.4C33.28 68.4 38.67 63.01 38.67 54.05C38.67 45.1 33.28 39.7 24.55 39.7H14V68.4ZM20.8 62.58V45.52H24.17C29.19 45.52 31.87 47.83 31.87 54.05C31.87 60.27 29.19 62.58 24.26 62.58Z" />
+    <path android:fillColor="#F2F5F8" android:pathData="M48.82 56.11C48.82 53.61 50.3 52.13 52.5 52.13C54.69 52.13 56 53.57 56 56V68.4H62.72V54.69C62.72 49.82 59.78 46.6 55.27 46.6C51.79 46.6 49.67 48.53 48.53 51.51L48.42 46.87H42.1V68.4H48.82Z" />
+    <path android:fillColor="#3DA9FC" android:pathData="M65.46 68.4H73.01L74.88 62.3H84.43L86.37 68.4H94L84.14 39.7H75.03ZM76.47 57.1 76.86 55.86C77.8 52.61 78.65 48.99 79.52 45.12C80.44 48.97 81.39 52.59 82.39 55.86L82.77 57.1Z" />
+</vector>

@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- WLAN-Signal und -Geschwindigkeit für den Kurzbericht (ohne Netzname, ohne Standort) -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Fernseher im WLAN finden (DLNA/SSDP), um dort abzuspielen -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Hält WLAN und CPU während der Wiedergabe wach (gegen Hänger durch Stromsparmodus). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Erinnerungen an Sendungen: Benachrichtigung und nach Neustart wieder einplanen -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Updates direkt in der App installieren (Android fragt einmal nach „Unbekannte Apps“). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Aufnahmen und Downloads laufen als Dienst im Vordergrund weiter, auch wenn die App zu ist. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Weiterleitung zum Fernseher (LG & Co.) läuft im Hintergrund weiter -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Fire TV / Android TV: keine Touch-Bedienung nötig, Leanback-Launcher unterstützen -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <!-- Spracheingabe in der Suche (Android TV / Google TV); ohne diese Angabe sieht die App die Spracherkennung nicht. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <!-- Reiter „Apps“: installierte Apps auch über ihren Namen finden (Paketnamen unterscheiden sich je Gerät). -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- Reiter „Apps“: die App finden, die Links der Webseite öffnet (Paketnamen unterscheiden sich je Gerät). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".AyuApp"
+        android:allowBackup="false"
+        android:banner="@drawable/banner"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:largeHeap="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AyuTV"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="colorMode|density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="fullUser">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <!-- Suche von außen (Sprachassistent, Systemsuche) -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Alle Konfigurationswechsel selbst behandeln: Schaltet der Fernseher die Bildwiederholrate,
+             HDR oder die Auflösung um, darf der Player nicht neu starten (sonst Endlosschleife).
+             Auf dem Handy dreht er sich mit (hoch/quer) und läuft als Bild-in-Bild weiter. -->
+        <activity
+            android:name=".player.PlayerActivity"
+            android:configChanges="colorMode|density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:screenOrientation="fullUser"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.AyuTV.Player" />
+        <!-- Übersetzer und Texterkennung im eigenen Prozess: Speichermangel oder ein Modellabsturz
+             beenden nur die Übersetzung, nie den laufenden Film. -->
+        <service
+            android:name=".data.translate.TranslationService"
+            android:exported="false"
+            android:process=":mt" />
+        <service
+            android:name=".data.record.RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".player.CastService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name=".data.remote.RemoteService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <!-- Nächtliches Vorbereiten der Untertitel läuft als Vordergrund-Arbeit (länger als 10 Minuten). -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+        <receiver
+            android:name=".data.reminders.ReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Chromecast (Handy mit Google-Play-Diensten) -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="de.ayutv.player.cast.CastOptionsProvider" />
+
+        <!-- Heruntergeladenes Update an den Paket-Installer übergeben -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Keine Telemetrie der ONNX Runtime (würde Nutzungsdaten an Microsoft senden). -->
+        <provider
+            android:name="ai.onnxruntime.TelemetryInitializer"
+            android:authorities="${applicationId}.onnxruntime_telemetry_initializer"
+            tools:node="remove" />
+    </application>
+</manifest>

@@ -1,0 +1,21 @@
+<resources>
+    <style name="Theme.AyuTV" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowAnimationStyle">@style/AyuActivityAnimation</item>
+    </style>
+
+    <!-- Wechsel zwischen Übersicht und Player: Aufzoomen und Einblenden statt hartem Schnitt. -->
+    <style name="AyuActivityAnimation" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/player_open_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/player_open_exit</item>
+        <item name="android:activityCloseEnterAnimation">@anim/player_close_enter</item>
+        <item name="android:activityCloseExitAnimation">@anim/player_close_exit</item>
+    </style>
+
+    <style name="Theme.AyuTV.Player">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

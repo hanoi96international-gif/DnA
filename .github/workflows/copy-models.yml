@@ -1,0 +1,46 @@
+name: Modelle übernehmen
+
+# Einmalig nach dem Umzug: Übersetzungsmodelle (Release-Dateien) aus einem anderen öffentlichen Repo in dieses kopieren.
+# Datei für Datei herunterladen, hochladen, löschen – passt so auch bei vielen Gigabyte auf den Runner.
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Quell-Repo (owner/name)"
+        required: true
+      tags:
+        description: "Release-Tags, mit Leerzeichen getrennt"
+        required: true
+        default: "models-ort-1.22.0 models-src"
+
+permissions:
+  contents: write
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: ${{ inputs.source }}
+    steps:
+      - name: Kopieren
+        run: |
+          set -euo pipefail
+          for tag in ${{ inputs.tags }}; do
+            echo "== $tag"
+            info=$(curl -fsSL "https://api.github.com/repos/$SOURCE/releases/tags/$tag")
+            name=$(echo "$info" | jq -r '.name // empty')
+            gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+              gh release create "$tag" -R "$GITHUB_REPOSITORY" --title "${name:-$tag}" --notes "Übersetzungsmodelle" --latest=false
+            have=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' || true)
+            echo "$info" | jq -r '.assets[] | "\(.name)\t\(.browser_download_url)"' | while IFS=$'\t' read -r asset url; do
+              if echo "$have" | grep -qxF "$asset"; then echo "schon da: $asset"; continue; fi
+              for attempt in 1 2 3; do
+                curl -fsSL --retry 3 -o "$asset" "$url" && gh release upload "$tag" "$asset" -R "$GITHUB_REPOSITORY" --clobber && break
+                echo "Versuch $attempt für $asset fehlgeschlagen"; sleep 10
+              done
+              rm -f "$asset"
+              echo "kopiert: $asset"
+            done
+          done

@@ -1,0 +1,431 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  # Artefakte früherer Läufe lesen (Build aus dem PR auf main übernehmen).
+  actions: read
+
+# Neuer Push auf denselben PR: den alten Lauf abbrechen (main und Tags laufen immer zu Ende).
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # FFmpeg-Tondecoder (DTS, TrueHD, AC-3/E-AC-3 …) für Media3 bauen. Dauert beim ersten Mal einige
+  # Minuten, danach kommt das Ergebnis aus dem Cache (Schlüssel: Bauskript + Media3-Version).
+  ffmpeg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-aar
+          key: media3-ffmpeg-${{ hashFiles('ci/build-ffmpeg.sh') }}
+
+      - uses: actions/setup-java@v5
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: FFmpeg-Erweiterung bauen
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ci/build-ffmpeg.sh ffmpeg-aar /tmp/ffmpeg-build
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ffmpeg-aar
+          path: ffmpeg-aar/*.aar
+
+  # Umverpacken von Filmen für den Fernseher (app/src/main/cpp/remux): kleine native Bibliothek mit eigenem,
+  # schlankem FFmpeg (MKV/MP4 lesen, MPEG-TS schreiben, Ton in AC3 umrechnen). Aus dem Cache, solange sich Quellcode
+  # und Bauskript nicht ändern.
+  remux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: remux-libs
+          key: remux-${{ hashFiles('ci/build-remux.sh', 'ci/remux-config.sh', 'ci/test-remux.sh', 'app/src/main/cpp/remux/**', 'app/src/test/native/**') }}
+
+      # Erst auf dem Rechner prüfen (Testfilme: HEVC/DTS, offene GOP, TrueHD, FLAC, MP4 mit zwei Tonspuren):
+      # alle Bilder da, keine Dekodierfehler, jedes Stück für sich abspielbar, Ton ohne Lücken an den Stückgrenzen.
+      - name: Umverpacken testen
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg > /dev/null
+          ci/test-remux.sh /tmp/remux-test
+
+      - name: Umverpacken bauen
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ci/build-remux.sh remux-libs /tmp/remux-build
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: remux-libs
+          path: remux-libs/
+
+  # Debug-App, Test-APK und Unit-Tests. Läuft parallel zur Release-App (jede in einem eigenen Runner:
+  # zwei Kotlin-Übersetzungen auf einem Runner bremsten sich gegenseitig auf fast eine Stunde aus).
+  # Auf main kommt der Build aus dem PR mit genau diesem Quellstand (Git-Tree), statt neu zu bauen.
+  build:
+    needs: [ffmpeg, remux]
+    runs-on: ubuntu-latest
+    outputs:
+      apks: ci-apks-${{ steps.tree.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Quellstand
+        id: tree
+        run: echo "hash=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - name: Build aus dem PR übernehmen
+        id: reuse
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/reuse-artifact.sh "ci-apks-${{ steps.tree.outputs.hash }}" app/build/outputs/apk
+
+      - uses: actions/download-artifact@v5
+        if: steps.reuse.outcome != 'success'
+        with:
+          name: ffmpeg-aar
+          path: app/libs
+
+      - uses: actions/download-artifact@v5
+        if: steps.reuse.outcome != 'success'
+        with:
+          name: remux-libs
+          path: app/src/main/jniLibs
+
+      - uses: actions/setup-java@v5
+        if: steps.reuse.outcome != 'success'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+        if: steps.reuse.outcome != 'success'
+
+      - name: Tests und Debug-APKs bauen
+        if: steps.reuse.outcome != 'success'
+        # Auch die Test-APK: Gerätetest, Handy-Test und ARM-Test nehmen diese APKs, statt neu zu bauen.
+        run: ci/gradle-watchdog.sh 40 --no-daemon --console=plain -Pkotlin.compiler.execution.strategy=in-process testDebugUnitTest assembleDebug assembleDebugAndroidTest
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ci-apks-${{ steps.tree.outputs.hash }}
+          path: |
+            app/build/outputs/apk/debug/
+            app/build/outputs/apk/androidTest/
+          retention-days: 14
+
+  # Release-App (R8). Auf main ebenfalls aus dem PR übernommen, wenn der Quellstand gleich ist.
+  release:
+    needs: [ffmpeg, remux]
+    runs-on: ubuntu-latest
+    outputs:
+      apk: release-apk-${{ steps.tree.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Quellstand
+        id: tree
+        run: echo "hash=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - name: Build aus dem PR übernehmen
+        id: reuse
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/reuse-artifact.sh "release-apk-${{ steps.tree.outputs.hash }}" app/build/outputs/apk/release
+
+      - uses: actions/download-artifact@v5
+        if: steps.reuse.outcome != 'success'
+        with:
+          name: ffmpeg-aar
+          path: app/libs
+
+      - uses: actions/download-artifact@v5
+        if: steps.reuse.outcome != 'success'
+        with:
+          name: remux-libs
+          path: app/src/main/jniLibs
+
+      - uses: actions/setup-java@v5
+        if: steps.reuse.outcome != 'success'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+        if: steps.reuse.outcome != 'success'
+
+      - name: Release-APK bauen
+        if: steps.reuse.outcome != 'success'
+        run: ci/gradle-watchdog.sh 50 --no-daemon --console=plain -Pkotlin.compiler.execution.strategy=in-process assembleRelease assemblePhone
+
+      # Handy-Fassung (ohne Installationsrecht) neben die Release-APK legen: ein Artefakt für beide.
+      - name: Handy-APK dazulegen
+        if: steps.reuse.outcome != 'success'
+        run: cp app/build/outputs/apk/phone/app-phone.apk app/build/outputs/apk/release/app-phone.apk
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: release-apk-${{ steps.tree.outputs.hash }}
+          path: app/build/outputs/apk/release/
+          retention-days: 14
+
+      - name: APK umbenennen
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk out/DnA-TV.apk
+          if [ -f app/build/outputs/apk/release/app-phone.apk ]; then cp app/build/outputs/apk/release/app-phone.apk out/DnA-TV-Handy.apk; fi
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: DnA-TV-apk
+          path: out/*.apk
+
+  # Jede neue Version (versionName) auf main erzeugt ein eigenes Release mit Tag v<versionName>.
+  publish:
+    needs: [build, release]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.build.outputs.apks }}
+          path: apk
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.release.outputs.apk }}
+          path: apk/release
+
+      - name: APKs umbenennen
+        run: |
+          mkdir -p out
+          cp apk/release/app-release.apk out/DnA-TV.apk
+          if [ -f apk/release/app-phone.apk ]; then cp apk/release/app-phone.apk out/DnA-TV-Handy.apk; fi
+          cp apk/debug/app-debug.apk out/DnA-TV-debug.apk
+
+      - name: Versionsnummer lesen
+        id: version
+        run: echo "name=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}
+          name: DnA-TV ${{ steps.version.outputs.name }}
+          make_latest: true
+          overwrite_files: true
+          files: out/DnA-TV*.apk
+
+  # Rundgang auf einem Android-TV-Emulator: echte Wiedergabe, Screenshots, Messwerte.
+  # Fire TV Stick 4K hat einen 32-Bit-ARM-Prozessor: App mit armeabi-v7a-Bibliotheken im Emulator
+  # (Android 11 übersetzt ARM-Code) und Texterkennung/Übersetzung prüfen. Ergebnis im Branch arm-results.
+  arm32:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: ffmpeg-aar
+          path: app/libs
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v5
+      - name: KVM aktivieren
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: APKs aus dem Build übernehmen
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.build.outputs.apks }}
+          path: app/build/outputs/apk
+      - name: Selbsttest mit 32-Bit-ARM
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          # Google-APIs-Abbild: enthält die ARM-Übersetzung (native bridge) für 32-Bit-ARM-Apps.
+          target: google_apis
+          arch: x86_64
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
+          disable-animations: true
+          script: ci/run-arm-selftest.sh
+      - name: Ergebnisse veröffentlichen
+        if: always()
+        run: |
+          mkdir -p arm-out && cd arm-out
+          echo "${{ github.sha }}" > COMMIT
+          git init -q -b arm-results
+          git config user.name "DnA-TV CI"
+          git config user.email "ci@users.noreply.github.com"
+          git add -A
+          git commit -qm "ARM-Ergebnisse für ${{ github.sha }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" arm-results
+
+  # Ergebnisse landen im Branch ci-results (Screenshots, results.txt, gfxinfo, logcat).
+  device:
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: ffmpeg-aar
+          path: app/libs
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: KVM aktivieren
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Testinhalte erzeugen und bereitstellen
+        run: |
+          command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+          ci/make-test-media.sh ci-media
+          nohup python3 ci/test_server.py ci-media > http.log 2>&1 &
+
+      - name: APKs aus dem Build übernehmen
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.build.outputs.apks }}
+          path: app/build/outputs/apk
+
+      - name: Release-APK aus dem Build übernehmen
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.release.outputs.apk }}
+          path: app/build/outputs/apk/release
+
+      # Upgrade-Test: Die Version aus main zuerst installieren, dann die neue darüber. So fällt eine
+      # fehlerhafte Datenbank-Migration auf, bevor sie auf dem Fire TV die Playlists kostet.
+      - name: Vorversion holen (Upgrade-Test)
+        run: |
+          # Die veröffentlichte Debug-APK der letzten Version (gleiche Signatur) statt sie neu zu bauen:
+          # spart auf langsamen Runnern fast eine Stunde. Nur wenn es sie nicht gibt, wird gebaut.
+          if curl -fsSL --retry 3 -o previous-debug.apk "https://github.com/${{ github.repository }}/releases/latest/download/DnA-TV-debug.apk"; then
+            echo "Vorversion aus dem letzten Release geladen"
+          else
+            rm -f previous-debug.apk
+            mkdir -p ~/.android && cp signing/ayutv.keystore ~/.android/debug.keystore
+            git fetch -q --depth 1 origin main
+            git worktree add -q ../previous FETCH_HEAD
+            if (cd ../previous && ./gradlew --no-daemon assembleDebug > ../previous-build.log 2>&1); then
+              cp ../previous/app/build/outputs/apk/debug/app-debug.apk previous-debug.apk
+            else
+              echo "Vorversion ließ sich nicht bauen, Upgrade-Test entfällt"; tail -40 ../previous-build.log
+            fi
+          fi
+
+      - name: Rundgang im Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          # AOSP ohne Google-Play-Dienste: verhält sich wie Fire OS (Amazon hat keine Google-Dienste).
+          target: default
+          arch: x86_64
+          profile: tv_1080p
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
+          disable-animations: true
+          script: ci/run-device-tour.sh
+
+      - name: Ergebnisse veröffentlichen
+        if: always()
+        run: |
+          mkdir -p ci-out && cp http.log ci-out/ 2>/dev/null || true
+          cd ci-out
+          echo "${{ github.sha }}" > COMMIT
+          git init -q -b ci-results
+          git config user.name "DnA-TV CI"
+          git config user.email "ci@users.noreply.github.com"
+          git add -A
+          git commit -qm "Ergebnisse für ${{ github.sha }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-results
+
+  # Handy mit Touchscreen: tippen statt Fernbedienung, Hoch- und Querformat, Player.
+  phone:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: KVM aktivieren
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Testinhalte erzeugen und bereitstellen
+        run: |
+          command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+          ci/make-test-media.sh ci-media
+          nohup python3 ci/test_server.py ci-media > http.log 2>&1 &
+
+      - name: APKs aus dem Build übernehmen
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.build.outputs.apks }}
+          path: app/build/outputs/apk
+
+      - name: Handy-Test im Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: default
+          arch: x86_64
+          profile: pixel_4
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
+          disable-animations: true
+          script: ci/run-phone-test.sh
+
+      - name: Ergebnisse hochladen
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: phone-results
+          path: ci-phone
+          retention-days: 7

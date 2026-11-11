@@ -1,0 +1,4 @@
+# Baseline-Profil: alle Ayu-TV-Klassen und -Methoden beim Installieren vorkompilieren (AOT).
+# Compose, Media3 und Room bringen ihre eigenen Profile mit; der Profile Installer wendet alles an.
+Lde/ayutv/**;
+HSPLde/ayutv/**;->**(**)**

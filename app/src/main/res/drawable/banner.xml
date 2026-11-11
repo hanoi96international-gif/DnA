@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#0B0F14" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#1B4A6E" android:pathData="M0,150h320v30h-320z" />
+    <!-- Schriftzug "DnA" (Inter ExtraBold, SIL Open Font License) -->
+    <path android:fillColor="#3DA9FC" android:pathData="M51.11 106C68.56 106 79.34 95.22 79.34 77.3C79.34 59.39 68.56 48.61 51.11 48.61H30V106ZM43.6 94.37V60.24H50.34C60.39 60.24 65.74 64.86 65.74 77.3C65.74 89.75 60.39 94.37 50.53 94.37Z" />
+    <path android:fillColor="#F2F5F8" android:pathData="M99.64 81.43C99.64 76.42 102.6 73.45 107 73.45C111.39 73.45 114.01 76.34 114.01 81.19V106H127.45V78.58C127.45 68.83 121.56 62.4 112.54 62.4C105.57 62.4 101.33 66.25 99.06 72.22L98.83 62.94H86.2V106H99.64Z" />
+    <path android:fillColor="#3DA9FC" android:pathData="M132.92 106H148.02L151.75 93.79H170.86L174.75 106H190L170.28 48.61H152.06ZM154.95 83.39 155.72 80.93C157.61 74.42 159.3 67.17 161.04 59.43C162.88 67.14 164.77 74.38 166.77 80.93L167.54 83.39Z" />
+    <!-- Play-Symbol -->
+    <path android:fillColor="#F2F5F8" android:pathData="M210,58l64,32l-64,32z" />
+</vector>
