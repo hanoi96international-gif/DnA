@@ -929,7 +929,12 @@ class DeviceTourTest {
                 val rejected = waitFor(420_000) { scenario.read { a -> a.statusHistory.any { "anderen Film" in it } } }
                 log("wrong_subtitles: rejected=$rejected synced=${scenario.read { it.subtitleAutoSynced }} statuses=${scenario.read { it.statusHistory.toList() }.takeLast(3)}")
                 assertTrue("Falsche Untertitel nicht erkannt", rejected)
-                assertTrue("Falsche Untertitel wurden 'ausgerichtet'", scenario.read { !it.subtitleAutoSynced })
+                // Nur die falsche Datei darf nicht ausgerichtet worden sein. Was danach an ihre Stelle tritt (etwa eine
+                // übersetzte Vorlage mit anderem Vorspann), wird zu Recht ausgerichtet – das ist kein Fehler.
+                val history = scenario.read { it.statusHistory.toList() }
+                val rejectedAt = history.indexOfFirst { "anderen Film" in it }
+                val alignedBefore = history.take(rejectedAt.coerceAtLeast(0)).any { "angepasst" in it || "ausgerichtet" in it }
+                assertTrue("Falsche Untertitel wurden 'ausgerichtet': $history", !alignedBefore)
             }
         }
         // 5. Serienfolge über Xtream abspielen
