@@ -188,6 +188,13 @@ jobs:
         if: steps.reuse.outcome != 'success'
         run: cp app/build/outputs/apk/phone/app-phone.apk app/build/outputs/apk/release/app-phone.apk
 
+      # Mit dem eigenen, geheimen Schlüssel signieren (Schlüsselwechsel), sobald er angelegt ist (siehe release-key.yml).
+      - name: Mit eigenem Schlüssel signieren
+        if: steps.reuse.outcome != 'success'
+        env:
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ci/sign-release.sh app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/app-phone.apk
+
       - uses: actions/upload-artifact@v5
         with:
           name: release-apk-${{ steps.tree.outputs.hash }}

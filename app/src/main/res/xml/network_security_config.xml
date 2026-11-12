@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Netzwerk-Sicherheit:
+  - Nur Zertifikate aus dem System gelten (keine vom Nutzer oder einer App nachinstallierten Stellen, mit denen sich
+    verschlüsselte Verbindungen mitlesen ließen).
+  - Zu den Diensten der App (Updates, Untertitel, Übersetzung, Modelle) nur verschlüsselt: Ein unverschlüsselter Aufruf
+    dorthin wird abgewiesen statt im Klartext gesendet.
+  - Sonst bleibt unverschlüsseltes HTTP erlaubt: Viele IPTV-Anbieter, TV-Guide-Quellen und Geräte im Heimnetz
+    (Fernseher, Fernbedienung, Aufzeichnung auf 127.0.0.1) können nichts anderes.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+        <domain includeSubdomains="true">opensubtitles.com</domain>
+        <domain includeSubdomains="true">deepl.com</domain>
+        <domain includeSubdomains="true">huggingface.co</domain>
+        <domain includeSubdomains="true">hf.co</domain>
+        <domain includeSubdomains="true">cloudflare-dns.com</domain>
+        <domain includeSubdomains="true">dns.google</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

@@ -123,7 +123,10 @@ class DeviceTourTest {
         section("upgrade") {
             val version = container.db.openHelper.readableDatabase.version
             val existing = runBlocking { container.db.playlists().all() }
-            log("db_version=$version playlists_before=${existing.size}")
+            val dbFile = app.getDatabasePath("ayu.db")
+            val encrypted = dbFile.exists() && !de.ayutv.data.db.EncryptedOpenHelperFactory.isPlain(dbFile)
+            log("db_version=$version playlists_before=${existing.size} encrypted=$encrypted")
+            assertTrue("Datenbank ist nicht verschlüsselt", encrypted)
             assertTrue("Datenbank auf Version $version statt ${de.ayutv.data.db.AyuDatabase.VERSION}", version == de.ayutv.data.db.AyuDatabase.VERSION)
             // In der Vorversion angelegte eigene Daten müssen das Update überstehen (siehe ci/run-device-tour.sh).
             val seeded = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("upgradeSeeded") == "true"
@@ -925,7 +928,14 @@ class DeviceTourTest {
             launchPlayer(PlayerActivity.vodIntent(app, request)).use { scenario ->
                 waitFor(25_000) { scenario.read { it.player?.playbackState } == Player.STATE_READY }
                 scenario.onActivity { it.player?.seekTo(0) }
-                scenario.onActivity { it.showLoaded("it") }
+                // Die gespeicherte Datei lädt die App nach dem Start im Hintergrund: erst zeigen, wenn sie da ist (vorher
+                // lieferte showLoaded false, es geschah nichts, und der Abschnitt wartete 7 Minuten vergeblich).
+                val shown = waitFor(30_000) {
+                    var ok = false
+                    scenario.onActivity { ok = it.showLoaded("it") }
+                    ok
+                }
+                assertTrue("Gespeicherte Untertitel nicht geladen", shown)
                 val rejected = waitFor(420_000) { scenario.read { a -> a.statusHistory.any { "anderen Film" in it } } }
                 log("wrong_subtitles: rejected=$rejected synced=${scenario.read { it.subtitleAutoSynced }} statuses=${scenario.read { it.statusHistory.toList() }.takeLast(3)}")
                 assertTrue("Falsche Untertitel nicht erkannt", rejected)

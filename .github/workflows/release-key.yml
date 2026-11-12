@@ -1,0 +1,34 @@
+name: Signaturschlüssel erzeugen
+
+# Einmalig: eigenen, geheimen Signaturschlüssel erzeugen. Er wird mit dem Passwort aus dem Secret RELEASE_KEY_PASSWORD
+# verschlüsselt (AES-256, PBKDF2 mit 600.000 Runden) und so ins Repo gelegt; ohne das Passwort ist er wertlos.
+# Das Passwort sieht niemand außer dem Inhaber des Repos – auch nicht dieser Ablauf (es steht nur in GitHub-Secrets).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  key:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Schlüssel erzeugen und verschlüsselt ablegen
+        run: |
+          set -euo pipefail
+          [ -n "$RELEASE_KEY_PASSWORD" ] || { echo "::error::Secret RELEASE_KEY_PASSWORD fehlt (Settings → Secrets and variables → Actions)"; exit 1; }
+          [ ${#RELEASE_KEY_PASSWORD} -ge 20 ] || { echo "::error::Passwort zu kurz – mindestens 20 Zeichen"; exit 1; }
+          [ ! -f signing/release.p12.enc ] || { echo "::error::Es gibt schon einen Schlüssel – er wird nicht überschrieben"; exit 1; }
+          tmp=$(mktemp -d)
+          keytool -genkeypair -keystore "$tmp/release.p12" -storetype PKCS12 -storepass:env RELEASE_KEY_PASSWORD \
+            -alias dna -keyalg RSA -keysize 4096 -validity 11000 -dname "CN=DnA-TV"
+          openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -in "$tmp/release.p12" -out signing/release.p12.enc -pass env:RELEASE_KEY_PASSWORD
+          rm -rf "$tmp"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add signing/release.p12.enc
+          git commit -m "Eigener Signaturschlüssel (verschlüsselt)"
+          git push

@@ -111,8 +111,13 @@ abstract class AyuDatabase : RoomDatabase() {
             }
         }
 
-        fun build(context: Context): AyuDatabase =
+        /**
+         * [key]: Schlüssel der verschlüsselten Datenbank (32 Byte, siehe [EncryptedOpenHelperFactory]). [keyLost]: Der
+         * bisherige Schlüssel ist verloren (Keystore zurückgesetzt) – eine damit verschlüsselte Datei wird beiseitegelegt.
+         */
+        fun build(context: Context, key: ByteArray, keyLost: Boolean = false): AyuDatabase =
             Room.databaseBuilder(context, AyuDatabase::class.java, "ayu.db")
+                .openHelperFactory(EncryptedOpenHelperFactory(context, key, keyLost))
                 // WAL erzwingen: Die Oberfläche kann lesen, während im Hintergrund EPG geschrieben wird.
                 // Fire TV Sticks melden sich oft als "low RAM", dann würde Room sonst TRUNCATE wählen.
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)

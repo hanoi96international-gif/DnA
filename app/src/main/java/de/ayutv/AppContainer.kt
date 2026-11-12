@@ -27,7 +27,8 @@ import java.util.concurrent.TimeUnit
 class AppContainer(val context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsStore(context)
-    val db = AyuDatabase.build(context)
+    /** Ganze Datenbank verschlüsselt (SQLCipher); der Schlüssel ist durch den Android-Keystore geschützt. */
+    val db = de.ayutv.data.security.DatabaseKey.obtain(context).let { AyuDatabase.build(context, it.key, keyLost = it.lost) }
 
     /** Ein gemeinsamer Client: Verbindungen zum IPTV-Server bleiben offen, das spart beim Zappen den TCP/TLS-Aufbau. */
     val http: OkHttpClient = OkHttpClient.Builder()
