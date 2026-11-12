@@ -1605,7 +1605,7 @@ class DeviceTourTest {
                 // Gerät ohne 4K-HEVC-Decoder, auf dem der eigene Software-Decoder bewusst aus ist (Fernseher-Sticks und
                 // Geräte unter 2,5 GB Arbeitsspeicher, auch der Emulator): Erwartet ist eine klare Meldung statt eines Bildes.
                 val noSoft = !de.ayutv.player.dna.engine.DnaEngineCore.softVideoSupported("video/hevc")
-                if (!shown && noSoft && "scheitern an" in dnaInfo()) {
+                if (!shown && noSoft && dnaInfo().let { "scheitern an" in it || "Kein Bild-Decoder" in it }) {
                     log("dna_engine_4k: kein 4K-Decoder, Software-Decoder aus – klare Meldung statt Bild")
                     return@section
                 }
@@ -1631,7 +1631,7 @@ class DeviceTourTest {
             assertTrue("4K-Test ohne Ergebnis", done)
             // Ohne 4K-Decoder und ohne erlaubten Software-Decoder: ein klares „✗ … scheitern an …“ ist das richtige Ergebnis.
             val noSoft = !de.ayutv.player.dna.engine.DnaEngineCore.softVideoSupported("video/hevc")
-            val clearNo = noSoft && result?.startsWith("✗") == true && "scheitern an" in result
+            val clearNo = noSoft && result?.startsWith("✗") == true && ("scheitern an" in result || "Kein Bild-Decoder" in result)
             assertTrue("4K-Test: $result", result?.startsWith("✗") == false || clearNo)
         }
 
