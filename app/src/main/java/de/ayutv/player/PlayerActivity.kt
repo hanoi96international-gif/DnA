@@ -2210,9 +2210,16 @@ class PlayerActivity : ComponentActivity() {
             // Gespeicherte Übersetzungen laden lassen: Sind sie schon da, geht es ohne Halt weiter.
             delay(400)
             val started = SystemClock.elapsedRealtime()
+            val translatorDeaths = de.ayutv.data.translate.RemoteTranslator.disconnects
             var paused = false
             while (isActive) {
                 val player = this@PlayerActivity.player ?: break
+                // Übersetzer wurde beendet (Speicher, Absturz): Er muss erst neu laden – nicht darauf warten, der Film läuft
+                // weiter und die Übersetzung holt danach auf.
+                if (de.ayutv.data.translate.RemoteTranslator.disconnects != translatorDeaths) {
+                    subLog("Übersetzer neu gestartet – Vorlauf beendet, der Film läuft weiter")
+                    break
+                }
                 val store = embedded
                 val loadedUntil = minOf(until, player.bufferedPosition)
                 // Puffer voll (lädt nicht mehr) oder Fenster geladen: mehr Zeilen kommen vorerst nicht dazu.

@@ -168,6 +168,7 @@ class RemoteTranslator(private val context: Context) : Translator {
             // Prozess beendet (Speicher oder Absturz): offene Anfragen mit dem Grund beenden.
             override fun onServiceDisconnected(name: ComponentName) {
                 service = null
+                disconnects++
                 // Neu gestarteter Prozess muss die Modelle wieder laden: nächste Anfrage mit der langen Wartezeit.
                 warm.clear()
                 failAll(exitReason())
@@ -175,6 +176,7 @@ class RemoteTranslator(private val context: Context) : Translator {
 
             override fun onBindingDied(name: ComponentName) {
                 service = null
+                disconnects++
                 warm.clear()
                 failAll(exitReason())
             }
@@ -227,6 +229,8 @@ class RemoteTranslator(private val context: Context) : Translator {
     }
 
     internal companion object {
+        /** Wie oft der Übersetzer-Prozess beendet wurde (Speicher, Absturz) – der Player beendet dann einen Vorlauf. */
+        @Volatile var disconnects = 0
         /** Erster Aufruf: Modell laden (auf langsamen Geräten mit dem DnA-Rechenkern bis zu einigen Minuten). */
         const val COLD_TIMEOUT_MS = 180_000L
         /** Danach je Zeile. */

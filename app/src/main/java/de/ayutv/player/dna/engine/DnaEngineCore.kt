@@ -347,7 +347,8 @@ class DnaEngineCore(
             "Ton ${audioQueue.size} (${ms(audioQueue.firstOrNull()?.timeUs)}–${ms(audioQueue.lastOrNull()?.timeUs)} ms), " +
             "${queuedBytes / 1024} KB, Ziel ${ms(seekTargetUs)} ms, erstes Bild ${ms(videoStartUs)} ms, " +
             "Uhr ${if (clock.started) ms(clock.nowUs()) + " ms" else "steht"}, Ton: ${if (audioStarted) "läuft" else audioPhase}, " +
-            "Bild-Decoder ${videoDecoderName ?: if (softVideo != null) "eigener" else "keiner"}, Ende ${inputEnded}, Start ok ${startBufferReachedLocked(forAudio = true)}"
+            "Bild-Decoder ${videoDecoderName ?: if (softVideo != null) "eigener" else "keiner"}, Ende ${inputEnded}, Start ok ${startBufferReachedLocked(forAudio = true)}" +
+            (if (paused) ", angehalten" else "") + (if (buffering) ", puffert" else "")
     }
 
     fun setVolume(volume: Float) {
