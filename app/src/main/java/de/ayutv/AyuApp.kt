@@ -94,6 +94,7 @@ class AyuApp : Application(), SingletonImageLoader.Factory {
         registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 container.foreground = java.lang.ref.WeakReference(activity)
+                de.ayutv.ui.UiPerformance.inPlayer = activity !is MainActivity
                 // Ruckeln der Menüs messen (für den Fehlerbericht); der Player zählt seine Bilder selbst.
                 if (activity is MainActivity) de.ayutv.ui.UiPerformance.watch(activity)
             }

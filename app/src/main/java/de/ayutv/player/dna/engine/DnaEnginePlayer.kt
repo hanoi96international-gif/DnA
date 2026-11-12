@@ -218,6 +218,8 @@ class DnaEnginePlayer(
     val renderedFrames: Int get() = core.renderedFrames
     /** Bildrate des Stroms aus den Zeitstempeln (0 = noch unbekannt). */
     val streamFrameRate: Float get() = core.streamFrameRate
+    /** Zustand der Engine für Protokoll und Tests (Vorrat, Uhr, Ton). */
+    fun engineState(): String = core.stateLine()
     /** Laufender Bild-Decoder (Anzeige, Fehlerbericht). */
     val videoDecoderName: String? get() = core.videoDecoderName
     /** Ton geht an Receiver/Soundbar (nicht im Gerät dekodiert). */

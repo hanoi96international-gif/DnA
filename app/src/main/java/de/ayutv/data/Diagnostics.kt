@@ -180,7 +180,7 @@ object Diagnostics {
             out.append("Handy: ${de.ayutv.data.translate.PhoneHelper.describe()}\n")
         }
         if (!short) file(SELFTEST_FILE)?.let { out.append("Letzter Test:\n").append(it).append('\n') }
-        NativeCrashLog.last(context.filesDir)?.let { out.append("Letzter nativer Absturz:\n").append(if (short) it.take(1_500) else it).append('\n') }
+        NativeCrashLog.lastRecent(context.filesDir, 48 * 3_600_000L)?.let { out.append("Letzter nativer Absturz (letzte 48 h) am ").append(if (short) it.take(1_500) else it).append('\n') }
 
         file(CRASH_FILE)?.let { section("Letzter Absturz"); out.append(if (short) it.take(2_000) else it).append('\n') }
         file(CAST_FILE)?.let { section("Letzte Übertragung"); out.append(it).append('\n') }

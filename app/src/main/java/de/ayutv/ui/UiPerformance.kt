@@ -97,6 +97,8 @@ object UiPerformance {
     private val bySection = java.util.concurrent.ConcurrentHashMap<String, Counter>()
     /** Bereich, der gerade zu sehen ist (von der Oberfläche gesetzt). */
     @Volatile var section: String = ""
+    /** Vorne liegende Seite (Menüs oder Player): lange Aufgaben werden ihr zugeordnet. */
+    @Volatile var inPlayer: Boolean = false
 
     /** Lädt gerade etwas im Hintergrund (Playlist, TV-Guide)? Von der App gesetzt. */
     @Volatile var busy: () -> Boolean = { false }
@@ -131,7 +133,7 @@ object UiPerformance {
                         val handler = h.substringBefore(')').substringAfterLast('.')
                         val callback = h.substringAfter("} ", "").substringBefore('@').substringBefore(':').substringAfterLast('.')
                         "$handler/$callback"
-                    }.take(80)
+                    }.take(80).let { "${if (inPlayer) "Player" else section.ifEmpty { "Menü" }}: $it" }
                     val entry = longTasks.getOrPut(name) { LongArray(2) }
                     synchronized(entry) { entry[0]++; entry[1] += ms }
                     if (longTasks.size > 60) longTasks.keys.firstOrNull()?.let { longTasks.remove(it) }
