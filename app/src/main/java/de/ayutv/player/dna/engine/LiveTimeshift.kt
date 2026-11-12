@@ -203,9 +203,13 @@ class LiveTimeshift(
         closed = true
         call?.cancel()
         synchronized(lock) { lock.notifyAll() }
-        runCatching { server.close() }
-        runCatching { writer.close() }
-        runCatching { file.delete() }
+        // Aufräumen abseits des Aufrufers (meist der Haupt-Thread beim Schließen des Players): Die Aufnahme kann mehrere
+        // GB groß sein, ihr Löschen dauerte auf dem Fire TV bis zu einer Sekunde – so lange stand die Oberfläche.
+        kotlin.concurrent.thread(name = "dna-ts-close", isDaemon = true) {
+            runCatching { server.close() }
+            runCatching { writer.close() }
+            runCatching { file.delete() }
+        }
     }
 
     companion object {

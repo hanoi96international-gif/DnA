@@ -38,9 +38,10 @@ android {
 
     buildTypes {
         release {
-            // R8 an (ohne Umbenennen, siehe proguard-rules.pro): Compose entfernt erst damit seine Mess- und
-            // Quelltext-Aufrufe in jeder Bildschirm-Funktion – ohne lief die Oberfläche auf dem Fire TV spürbar zäher.
-            isMinifyEnabled = true
+            // Ohne R8: Mit R8 stürzt der Übersetzer in ONNX Runtime ab („JNI DETECTED ERROR … java_class == null“,
+            // Fire TV 01.11. und wieder 12.11. mit 0.61.16 – trotz Keep-Regeln), und die Menüs wurden dadurch nicht
+            // messbar flüssiger (Kurzbericht 12.11.: 31,6 % statt 28 % langsame Bilder).
+            isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
