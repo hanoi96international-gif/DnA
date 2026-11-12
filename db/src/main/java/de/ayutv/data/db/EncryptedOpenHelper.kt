@@ -77,7 +77,11 @@ class EncryptedOpenHelperFactory(
         return try {
             deleteFiles(target)
             val started = android.os.SystemClock.elapsedRealtime()
-            val db = SQLiteDatabase.openDatabase(file.path, ByteArray(0), null, SQLiteDatabase.OPEN_READWRITE, null, null)
+            // CREATE_IF_NECESSARY: Angehängte Datenbanken übernehmen die Öffnungsart – ohne sie lässt sich die neue,
+            // verschlüsselte Datei nicht anlegen („unable to open database … (code 14)“).
+            val db = SQLiteDatabase.openDatabase(
+                file.path, ByteArray(0), null, SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY, null, null,
+            )
             try {
                 val version = db.version
                 // Nur eine Verbindung: Android öffnet sonst mehrere (WAL), und ATTACH hing an einer anderen als der
