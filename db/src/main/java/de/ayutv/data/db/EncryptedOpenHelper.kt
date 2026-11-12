@@ -37,6 +37,9 @@ class EncryptedOpenHelperFactory(
         fun helper(): SupportSQLiteOpenHelper = synchronized(this) {
             chosen ?: run {
                 val file = name?.let { context.getDatabasePath(it) }
+                // Abbruch mitten im Tausch (siehe encryptExisting): die beiseitegelegte alte Datei zurückholen.
+                val backup = file?.let { File(it.path + "-plain") }
+                if (file != null && backup != null && !file.exists() && backup.exists()) backup.renameTo(file)
                 if (keyLost && file != null && file.exists() && !isPlain(file)) {
                     Log.w(TAG, "Schlüssel der Datenbank verloren – sie wird neu angelegt (alte Datei beiseitegelegt)")
                     listOf("", "-wal", "-shm").forEach { File(file.path + it).renameTo(File(file.path + ".unlesbar" + it)) }
@@ -76,18 +79,35 @@ class EncryptedOpenHelperFactory(
             val started = android.os.SystemClock.elapsedRealtime()
             val db = SQLiteDatabase.openDatabase(file.path, ByteArray(0), null, SQLiteDatabase.OPEN_READWRITE, null, null)
             try {
-                db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
                 val version = db.version
+                // Alles mit rawExecSQL: läuft auf derselben (Haupt-)Verbindung. Über rawQuery landete der Export auf
+                // einer anderen Verbindung, an der „enc“ nicht hing („invalid target database enc“).
+                db.rawExecSQL("PRAGMA wal_checkpoint(TRUNCATE)")
                 db.rawExecSQL("ATTACH DATABASE '${target.path.replace("'", "''")}' AS enc KEY \"${String(key)}\"")
-                db.rawQuery("SELECT sqlcipher_export('enc')").use { it.moveToFirst() }
+                db.rawExecSQL("SELECT sqlcipher_export('enc')")
                 db.rawExecSQL("PRAGMA enc.user_version = $version")
                 db.rawExecSQL("DETACH DATABASE enc")
             } finally {
                 db.close()
             }
-            // Erst wenn die verschlüsselte Kopie vollständig ist, die alte ersetzen.
-            deleteFiles(file)
-            if (!target.renameTo(file)) throw IllegalStateException("Umbenennen fehlgeschlagen")
+            // Die Kopie prüfen (mit dem Schlüssel lesbar, gleiche Tabellen), erst dann tauschen – die alte bleibt dabei
+            // bis zuletzt erhalten, damit auch ein Abbruch mitten im Tausch nichts kostet.
+            val check = SQLiteDatabase.openDatabase(target.path, key, null, SQLiteDatabase.OPEN_READWRITE, null, null)
+            try {
+                check.rawQuery("SELECT count(*) FROM sqlite_master").use { if (!it.moveToFirst() || it.getInt(0) == 0) error("Kopie leer") }
+            } finally {
+                check.close()
+            }
+            val backup = File(file.path + "-plain")
+            deleteFiles(backup)
+            File(file.path + "-wal").delete()
+            File(file.path + "-shm").delete()
+            if (!file.renameTo(backup)) error("Umbenennen der alten Datei fehlgeschlagen")
+            if (!target.renameTo(file)) {
+                backup.renameTo(file)
+                error("Umbenennen der Kopie fehlgeschlagen")
+            }
+            deleteFiles(backup)
             Log.i(TAG, "Datenbank verschlüsselt (${file.length() / 1024} KB, ${android.os.SystemClock.elapsedRealtime() - started} ms)")
             true
         } catch (e: Exception) {
