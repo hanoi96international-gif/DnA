@@ -5834,13 +5834,13 @@ class PlayerActivity : ComponentActivity() {
         recordWatch()
         container.scope.launch(Dispatchers.IO) { de.ayutv.data.parse.ChannelQuality.saveIfChanged(container.qualityFile) }
         // Für den Fehlerbericht: was zuletzt lief und was der Player gemeldet hat.
-        de.ayutv.data.Diagnostics.savePlayerSession(
-            this,
-            if (isLive) playing?.name.orEmpty() else vodTitle,
-            statusHistory + listOf("Engine: $engineLabel" + ((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.lastInfo?.takeIf { it.isNotEmpty() }?.let { " (zuletzt: $it)" } ?: ""), "Technik: $stats", "Abbrüche: ${dropInfo.ifEmpty { "keine" }}") +
+        // Zusammenstellen hier, Schreiben abseits der Oberfläche (die Datei schreiben kostete beim Schließen Zeit).
+        val sessionTitle = if (isLive) playing?.name.orEmpty() else vodTitle
+        val sessionLines = statusHistory.toList() + listOf("Engine: $engineLabel" + ((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.lastInfo?.takeIf { it.isNotEmpty() }?.let { " (zuletzt: $it)" } ?: ""), "Technik: $stats", "Abbrüche: ${dropInfo.ifEmpty { "keine" }}") +
                 // Was die Engine selbst gemacht hat (Decoder, HEVC-Kopf, erstes Bild, Fehler, Neuverbinden).
-                listOf("Engine-Protokoll:") + de.ayutv.player.dna.engine.DnaEngineCore.journal().takeLast(100).map { "  $it" },
-        )
+                listOf("Engine-Protokoll:") + de.ayutv.player.dna.engine.DnaEngineCore.journal().takeLast(100).map { "  $it" }
+        val appContext = applicationContext
+        container.scope.launch(Dispatchers.IO) { de.ayutv.data.Diagnostics.savePlayerSession(appContext, sessionTitle, sessionLines) }
         // Bild-in-Bild-Fenster geschlossen: Player beenden statt unsichtbar im Hintergrund zu bleiben.
         if (inPip) {
             inPip = false
