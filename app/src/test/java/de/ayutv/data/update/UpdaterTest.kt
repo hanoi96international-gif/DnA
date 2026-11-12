@@ -37,4 +37,15 @@ class UpdaterTest {
         assertEquals("https://x/DnA-TV-Handy.apk", Updater.parseRelease(body, Updater.PHONE_APK)!!.apkUrl)
         assertEquals("https://x/DnA-TV.apk", Updater.parseRelease(body)!!.apkUrl)
     }
+
+    @Test
+    fun checksumFromGitHub() {
+        val hex = "773bb13f5c4d69e1d27a5a3e8e7f47089d1b8932c43a235a7588629a15616770"
+        val body = """{"tag_name":"v0.61.16","assets":[
+            {"name":"DnA-TV.apk","size":1,"browser_download_url":"https://x/DnA-TV.apk","digest":"sha256:$hex"}]}"""
+        assertEquals(hex, Updater.parseRelease(body)!!.sha256)
+        // Ohne oder mit unbekannter Prüfsumme: keine (Android prüft die Signatur beim Installieren trotzdem).
+        assertNull(Updater.parseRelease(body.replace("sha256:$hex", "md5:abc"))!!.sha256)
+        assertNull(Updater.parseRelease(body.replace(",\"digest\":\"sha256:$hex\"", ""))!!.sha256)
+    }
 }

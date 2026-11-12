@@ -29,7 +29,8 @@ import java.io.IOException
  * Paket-Installer. Android prüft dabei die Signatur; nur eine Version mit demselben Schlüssel geht drüber.
  */
 class Updater(private val context: Context, private val http: OkHttpClient) {
-    data class Release(val version: String, val apkUrl: String, val sizeBytes: Long, val notes: String)
+    /** [sha256]: Prüfsumme der APK, wie GitHub sie zur Datei meldet (Kleinbuchstaben-Hex), sonst null. */
+    data class Release(val version: String, val apkUrl: String, val sizeBytes: Long, val notes: String, val sha256: String? = null)
 
     sealed interface State {
         data object Idle : State
@@ -86,11 +87,11 @@ class Updater(private val context: Context, private val http: OkHttpClient) {
         for (attempt in 0 until 5) {
             if (attempt > 0) kotlinx.coroutines.delay(2_000L shl attempt)
             val client = if (attempt % 2 == 1) http.newBuilder().proxy(java.net.Proxy.NO_PROXY).build() else http
-            val result = downloadOnce(client, release, target)
+            val result = downloadOnce(client, release, target) ?: verify(release, target)
             if (result == null) return@withContext target.also { _state.value = State.Ready(release, it) }
             lastError = result
             Log.w(TAG, "Update-Download Versuch ${attempt + 1} fehlgeschlagen", result)
-            if (result.message?.startsWith("HTTP 4") == true) break
+            if (result.message?.startsWith("HTTP 4") == true || result.message?.contains("signiert") == true) break
         }
         target.delete()
         _state.value = State.Failed("Download fehlgeschlagen: ${lastError?.message}")
@@ -127,6 +128,47 @@ class Updater(private val context: Context, private val http: OkHttpClient) {
             return e
         }
     }
+
+    /**
+     * Heruntergeladene APK prüfen, bevor sie dem Installer übergeben wird: Prüfsumme wie von GitHub gemeldet (verändert
+     * oder unvollständig übertragen) und dieselbe Signatur wie die installierte App (fremde APK). null = in Ordnung.
+     */
+    private fun verify(release: Release, file: File): Exception? {
+        release.sha256?.let { expected ->
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    digest.update(buffer, 0, n)
+                }
+            }
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            if (actual != expected) return SecurityException("Prüfsumme der APK stimmt nicht – Download verworfen")
+        }
+        if (!sameSigner(file)) return SecurityException("APK ist nicht von DnA-TV signiert – Download verworfen")
+        return null
+    }
+
+    /** Trägt die APK dieselbe Signatur wie die installierte App? (Ohne lesbare Angaben: Android prüft beim Installieren.) */
+    @Suppress("DEPRECATION")
+    private fun sameSigner(file: File): Boolean = runCatching {
+        val pm = context.packageManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val flags = android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+            val archive = pm.getPackageArchiveInfo(file.path, flags)?.signingInfo ?: return@runCatching true
+            val installed = pm.getPackageInfo(context.packageName, flags).signingInfo ?: return@runCatching true
+            val theirs = (if (archive.hasMultipleSigners()) archive.apkContentsSigners else archive.signingCertificateHistory).map { it.toCharsString() }
+            val ours = (if (installed.hasMultipleSigners()) installed.apkContentsSigners else installed.signingCertificateHistory).map { it.toCharsString() }
+            // Gleicher Schlüssel oder ein Nachfolger in der Schlüssel-Historie (Schlüsselwechsel).
+            theirs.any { it in ours } || ours.any { it in theirs }
+        } else {
+            val archive = pm.getPackageArchiveInfo(file.path, android.content.pm.PackageManager.GET_SIGNATURES)?.signatures ?: return@runCatching true
+            val installed = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures ?: return@runCatching true
+            archive.map { it.toCharsString() }.toSet() == installed.map { it.toCharsString() }.toSet()
+        }
+    }.getOrDefault(true)
 
     /** Darf die App Pakete installieren? (Fire TV / Android 8+: einmal „Unbekannte Apps“ erlauben.) */
     fun canInstall(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls()
@@ -181,7 +223,10 @@ class Updater(private val context: Context, private val http: OkHttpClient) {
             val url = asset["browser_download_url"]?.jsonPrimitive?.contentOrNull ?: return null
             val size = asset["size"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
             val notes = (root["body"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull.orEmpty()
-            return Release(tag.removePrefix("v"), url, size, notes)
+            val digest = asset["digest"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
+                ?.takeIf { it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
+            return Release(tag.removePrefix("v"), url, size, notes, digest)
         }
 
         /** "0.26.1" neuer als "0.26.0"? Zahlen je Stelle vergleichen, Zusätze („-beta“) ignorieren. */

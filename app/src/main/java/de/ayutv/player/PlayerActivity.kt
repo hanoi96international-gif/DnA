@@ -4511,8 +4511,9 @@ class PlayerActivity : ComponentActivity() {
     /** Kopplungsschlüssel der LG-Fernseher (webOS), je Adresse: Nach dem ersten „Zulassen“ fragt der LG nicht mehr. */
     private val lgKeys = object : de.ayutv.data.net.LgWebOs.Keys {
         private val prefs get() = getSharedPreferences("lg_webos", MODE_PRIVATE)
-        override fun get(host: String): String? = prefs.getString(host, null)
-        override fun put(host: String, key: String) = prefs.edit().putString(host, key).apply()
+        // Kopplungsschlüssel verschlüsselt (Keystore), wie Passwörter; alte Klartext-Werte werden weiter gelesen.
+        override fun get(host: String): String? = de.ayutv.data.security.Credentials.reveal(prefs.getString(host, null))
+        override fun put(host: String, key: String) = prefs.edit().putString(host, de.ayutv.data.security.Credentials.protect(key)).apply()
     }
 
     /** Live (Umschalten): Mediaplayer des LG jedes Mal frisch starten, sonst hängt er oder läuft immer später. */

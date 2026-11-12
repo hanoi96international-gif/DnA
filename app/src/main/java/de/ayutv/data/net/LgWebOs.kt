@@ -35,6 +35,8 @@ object LgWebOs {
     }
 
     private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
+    /** Unter diesem Schlüssel (+ Adresse) steht der gemerkte Fingerabdruck des Fernseher-Zertifikats. */
+    private const val CERT_PREFIX = "cert:"
 
     /** Rechte, um die die App beim Koppeln bittet (Mediaplayer öffnen, Wiedergabe steuern, Lautstärke, Meldungen). */
     private val PERMISSIONS = listOf(
@@ -43,11 +45,30 @@ object LgWebOs {
         "READ_NETWORK_STATE", "READ_POWER_STATE", "CONTROL_INPUT_TV",
     )
 
-    /** Fernseher im eigenen WLAN haben ein selbst ausgestelltes Zertifikat: nur für diese Verbindung ohne Prüfung. */
-    private fun lanClient(base: OkHttpClient): OkHttpClient {
+    /**
+     * Fernseher im eigenen WLAN haben ein selbst ausgestelltes Zertifikat, das keine Stelle bestätigt. Wie bei SSH: Beim
+     * ersten Koppeln wird sein Fingerabdruck gemerkt, danach gilt nur noch genau dieses Zertifikat. Ein anderes Gerät,
+     * das sich als der Fernseher ausgibt (und die Senderadresse samt Zugangsdaten mitlesen will), wird abgewiesen.
+     * Ändert sich das Zertifikat wirklich (Werksreset, Firmware), werden Fingerabdruck und Kopplung verworfen: Beim
+     * nächsten Versuch fragt der Fernseher wieder nach „Zulassen“.
+     */
+    private fun lanClient(base: OkHttpClient, keys: Keys, host: String): OkHttpClient {
+        val pinKey = CERT_PREFIX + host
         val trustAll = object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                val cert = chain?.firstOrNull() ?: throw java.security.cert.CertificateException("kein Zertifikat")
+                val print = java.security.MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02x".format(it) }
+                val known = keys.get(pinKey)
+                when {
+                    known.isNullOrEmpty() -> keys.put(pinKey, print)
+                    known != print -> {
+                        keys.put(pinKey, "")
+                        keys.put(host, "")
+                        throw java.security.cert.CertificateException("Zertifikat des Fernsehers hat sich geändert – bitte neu koppeln")
+                    }
+                }
+            }
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         }
         val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustAll), null) }
@@ -76,7 +97,7 @@ object LgWebOs {
     ): String? {
         var last: String? = null
         for (address in listOf("wss://$host:3001/", "ws://$host:3000/")) {
-            val result = session(lanClient(base), address, keys, host, onPrompt) { send, lastReply ->
+            val result = session(lanClient(base, keys, host), address, keys, host, onPrompt) { send, lastReply ->
                 if (fresh) {
                     send("ssap://com.webos.applicationManager/getForegroundAppInfo", buildJsonObject { })
                     val app = lastReply()?.get("appId")?.jsonPrimitive?.contentOrNull
@@ -116,10 +137,10 @@ object LgWebOs {
      * „Hier weiterschauen“ gewählt war). Nur mit schon gemerktem Kopplungsschlüssel (fragt nicht neu).
      */
     suspend fun stop(base: OkHttpClient, host: String, keys: Keys): String? {
-        if (keys.get(host) == null) return "nicht gekoppelt"
+        if (keys.get(host).isNullOrEmpty()) return "nicht gekoppelt"
         var last: String? = null
         for (address in listOf("wss://$host:3001/", "ws://$host:3000/")) {
-            val result = session(lanClient(base), address, keys, host, {}) { send, lastReply ->
+            val result = session(lanClient(base, keys, host), address, keys, host, {}) { send, lastReply ->
                 send("ssap://media.controls/stop", buildJsonObject { })
                 // Welche App vorne ist (der Mediaplayer): genau die schließen, nicht etwa das Fernsehprogramm.
                 send("ssap://com.webos.applicationManager/getForegroundAppInfo", buildJsonObject { })
@@ -138,10 +159,10 @@ object LgWebOs {
      * Kopplungsschlüssel (fragt nicht neu). null = ok, sonst Grund.
      */
     suspend fun control(base: OkHttpClient, host: String, keys: Keys, uri: String): String? {
-        if (keys.get(host) == null) return "nicht gekoppelt"
+        if (keys.get(host).isNullOrEmpty()) return "nicht gekoppelt"
         var last: String? = null
         for (address in listOf("wss://$host:3001/", "ws://$host:3000/")) {
-            val result = session(lanClient(base), address, keys, host, {}) { send, _ -> send(uri, buildJsonObject { }) }
+            val result = session(lanClient(base, keys, host), address, keys, host, {}) { send, _ -> send(uri, buildJsonObject { }) }
             if (result == null) return null
             last = result
             if (!result.startsWith("keine Verbindung")) return result
@@ -207,7 +228,7 @@ object LgWebOs {
                 put("payload", buildJsonObject {
                     put("forcePairing", false)
                     put("pairingType", "PROMPT")
-                    keys.get(host)?.let { put("client-key", it) }
+                    keys.get(host)?.takeIf { it.isNotEmpty() }?.let { put("client-key", it) }
                     put("manifest", buildJsonObject {
                         put("manifestVersion", 1)
                         put("appVersion", "1.0")
