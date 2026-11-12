@@ -271,6 +271,13 @@ class DnaEngineCore(
         VsyncSampler.add()
         videoThread = HandlerThread("dna-video").apply { start() }
         videoHandler = Handler(videoThread!!.looper)
+        // Vor dem Lesen zurücksetzen (der Lese-Thread startet gleich und prüft auf Wiederholungen).
+        seenVideo.clear()
+        seenAudio.clear()
+        videoMaxUs = Long.MIN_VALUE
+        audioMaxUs = Long.MIN_VALUE
+        videoSkipUntilUs = Long.MIN_VALUE
+        audioSkipUntilUs = Long.MIN_VALUE
         source.start(gen, startUs, first) { what, block -> safely(what, block) }
         audioPhase = "startet"
         watchStuck(gen)
@@ -778,6 +785,7 @@ class DnaEngineCore(
                 audioTap?.let { tap -> runCatching { tap(sample) } }
             }
         }
+        if (live && isReplay(track.codec.kind == Kind.VIDEO, sample.timeUs, sample.data.size)) return
         if (track.codec.kind == Kind.VIDEO) {
             if (sample.keyframe) startMark("erstes Schlüsselbild empfangen") else startMark("erste Bilddaten")
             noteVideoRate(sample)
@@ -791,6 +799,68 @@ class DnaEngineCore(
             lock.notifyAll()
         }
         if (track.codec.kind == Kind.VIDEO) videoHandler?.post { feedVideo() }
+    }
+
+    // Wiederholung nach dem Neuverbinden (Live): größte bisher angenommene Zeit je Art und, solange übersprungen wird,
+    // bis wohin. Nur auf dem Lese-Thread benutzt; in [start] zurückgesetzt.
+    private var videoMaxUs = Long.MIN_VALUE
+    private var audioMaxUs = Long.MIN_VALUE
+    private var videoSkipUntilUs = Long.MIN_VALUE
+    private var audioSkipUntilUs = Long.MIN_VALUE
+    private var replaySkipped = 0
+    private var replayFromUs = 0L
+    /** Zuletzt angenommene Proben (Zeit → Größe), um eine Wiederholung sicher zu erkennen (etwa 2 Minuten). */
+    private val seenVideo = recentMap(3_000)
+    private val seenAudio = recentMap(6_000)
+
+    private fun recentMap(limit: Int) = object : LinkedHashMap<Long, Int>(limit, 0.75f) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Int>?) = size > limit
+    }
+
+    /**
+     * Viele Anbieter schicken nach dem Neuverbinden erst die letzten Sekunden noch einmal (Kurzbericht Fire TV 12.11.:
+     * nach jeder zweiten Neuverbindung 750 Bilder = 30 s). Die liegen hinter der Uhr: Der Decoder musste sie alle
+     * dekodieren, um sie dann als „zu spät“ zu verwerfen – so lange stand das Bild. Jetzt werden sie gleich hier
+     * übersprungen, bis der Strom wieder über das bisher Gesehene hinaus ist. Bilder kommen in Dekodier-Reihenfolge
+     * (B-Bilder bis etwa 1 s zurück) – erst darüber hinaus gilt es als Wiederholung; große Sprünge (anderes Programm,
+     * Zeitstempel-Überlauf) behandelt wie bisher die Uhr.
+     */
+    private fun isReplay(video: Boolean, timeUs: Long, size: Int): Boolean {
+        val seen = if (video) seenVideo else seenAudio
+        val max = if (video) videoMaxUs else audioMaxUs
+        val skipUntil = if (video) videoSkipUntilUs else audioSkipUntilUs
+        if (skipUntil != Long.MIN_VALUE) {
+            if (timeUs <= skipUntil && skipUntil - timeUs < REPLAY_MAX_US) {
+                if (video) replaySkipped++
+                return true
+            }
+            if (video) {
+                videoSkipUntilUs = Long.MIN_VALUE
+                DnaLog.i(TAG, "Anbieter wiederholte ${(skipUntil - replayFromUs) / 1000} ms nach dem Neuverbinden – $replaySkipped Bilder übersprungen")
+            } else audioSkipUntilUs = Long.MIN_VALUE
+        } else if (max != Long.MIN_VALUE && timeUs < max - (if (video) REPLAY_REORDER_US else REPLAY_AUDIO_US) &&
+            max - timeUs < REPLAY_MAX_US && seen.containsKey(timeUs)
+        ) {
+            // Genau dieselbe Zeit wie eine schon angenommene Probe: wirklich eine Wiederholung (die erste Probe nach dem
+            // Neuverbinden kann abgeschnitten sein, daher nicht die Größe). Ein neues Programm mit zurückgesetzten
+            // Zeitstempeln trifft keine dieser Zeiten genau und wird wie bisher gespielt.
+            if (video) {
+                videoSkipUntilUs = max
+                replaySkipped = 1
+                replayFromUs = timeUs
+            } else audioSkipUntilUs = max
+            return true
+        }
+        if (timeUs > max) if (video) videoMaxUs = timeUs else audioMaxUs = timeUs
+        // Weiter Sprung zurück (neues Programm, Zeitstempel-Überlauf): ab hier neu zählen. Kleinere Sprünge ohne Treffer
+        // lassen die Grenze stehen – die erste Probe nach dem Neuverbinden kann eine fremde Zeit tragen, die nächsten
+        // werden dann als Wiederholung erkannt.
+        if (max != Long.MIN_VALUE && max - timeUs >= REPLAY_MAX_US) {
+            if (video) videoMaxUs = timeUs else audioMaxUs = timeUs
+            seen.clear()
+        }
+        seen[timeUs] = size
+        return false
     }
 
     /**
@@ -2804,6 +2874,11 @@ class DnaEngineCore(
         private const val PREVIOUS_AUDIO_WAIT_MS = 1_500L
         private const val PHASE_OPENING = "öffnet die Tonausgabe"
         private const val STUCK_LOG_MS = 6_000L
+        /** Wiederholung nach dem Neuverbinden: Bilder dürfen in Dekodier-Reihenfolge so weit zurückliegen (B-Bilder). */
+        private const val REPLAY_REORDER_US = 1_000_000L
+        private const val REPLAY_AUDIO_US = 100_000L
+        /** Weiter zurück ist es keine Wiederholung, sondern ein neues Programm bzw. ein Zeitstempel-Überlauf. */
+        private const val REPLAY_MAX_US = 120_000_000L
         /** Prüfzeitraum der Ton-Uhr gegen die echte Zeit. */
         private const val CLOCK_CHECK_US = 4_000_000L
 
