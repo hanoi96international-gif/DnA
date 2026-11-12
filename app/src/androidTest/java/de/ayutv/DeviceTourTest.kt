@@ -123,7 +123,10 @@ class DeviceTourTest {
         section("upgrade") {
             val version = container.db.openHelper.readableDatabase.version
             val existing = runBlocking { container.db.playlists().all() }
-            log("db_version=$version playlists_before=${existing.size}")
+            val dbFile = app.getDatabasePath("ayu.db")
+            val encrypted = dbFile.exists() && !de.ayutv.data.db.EncryptedOpenHelperFactory.isPlain(dbFile)
+            log("db_version=$version playlists_before=${existing.size} encrypted=$encrypted")
+            assertTrue("Datenbank ist nicht verschlüsselt", encrypted)
             assertTrue("Datenbank auf Version $version statt ${de.ayutv.data.db.AyuDatabase.VERSION}", version == de.ayutv.data.db.AyuDatabase.VERSION)
             // In der Vorversion angelegte eigene Daten müssen das Update überstehen (siehe ci/run-device-tour.sh).
             val seeded = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("upgradeSeeded") == "true"

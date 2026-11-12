@@ -33,4 +33,7 @@ dependencies {
     api("androidx.room:room-ktx:$room")
     ksp("androidx.room:room-compiler:$room")
     api("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    // Verschlüsselte Datenbank (AES-256), siehe EncryptedOpenHelperFactory.
+    implementation("net.zetetic:sqlcipher-android:4.18.0")
+    implementation("androidx.sqlite:sqlite:2.7.0")
 }
