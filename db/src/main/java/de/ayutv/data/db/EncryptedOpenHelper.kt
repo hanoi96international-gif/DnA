@@ -80,10 +80,11 @@ class EncryptedOpenHelperFactory(
             val db = SQLiteDatabase.openDatabase(file.path, ByteArray(0), null, SQLiteDatabase.OPEN_READWRITE, null, null)
             try {
                 val version = db.version
-                // Alles mit rawExecSQL: läuft auf derselben (Haupt-)Verbindung. Über rawQuery landete der Export auf
-                // einer anderen Verbindung, an der „enc“ nicht hing („invalid target database enc“).
+                // Nur eine Verbindung: Android öffnet sonst mehrere (WAL), und ATTACH hing an einer anderen als der
+                // Export („invalid target database enc“). execSQL erkennt ATTACH und bleibt danach bei einer Verbindung.
                 db.rawExecSQL("PRAGMA wal_checkpoint(TRUNCATE)")
-                db.rawExecSQL("ATTACH DATABASE '${target.path.replace("'", "''")}' AS enc KEY \"${String(key)}\"")
+                db.disableWriteAheadLogging()
+                db.execSQL("ATTACH DATABASE '${target.path.replace("'", "''")}' AS enc KEY \"${String(key)}\"")
                 db.rawExecSQL("SELECT sqlcipher_export('enc')")
                 db.rawExecSQL("PRAGMA enc.user_version = $version")
                 db.rawExecSQL("DETACH DATABASE enc")
