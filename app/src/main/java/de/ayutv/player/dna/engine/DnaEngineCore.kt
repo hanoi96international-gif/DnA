@@ -1718,6 +1718,7 @@ class DnaEngineCore(
                 if (skipToKey) {
                     if (!sample.keyframe) {
                         droppedFrames++
+                        skippedToKey++
                         continue
                     }
                     skipToKey = false
@@ -1795,12 +1796,16 @@ class DnaEngineCore(
                 // im Vorrat liegt – sonst wird der Rückstand nie kleiner.
                 firstFrameShown && earlyUs < -CATCH_UP_US && keyframeQueued() -> {
                     droppedFrames++
+                    skippedToKey++
+                    if (!skipToKey) DnaLog.w(TAG, "Bild ${-earlyUs / 1000} ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild " +
+                        "(Bild ${ptsUs / 1000} ms, Uhr ${clock.nowUs() / 1000} ms, ${synchronized(lock) { videoQueue.size }} Bilder im Vorrat)")
                     skipToKey = true
                     codec.releaseOutputBuffer(index, false)
                 }
                 // Zu spät, aber gerade erst ein Bild gezeigt: verwerfen. Sonst lieber spät zeigen als stehen bleiben.
                 firstFrameShown && earlyUs < -LATE_US && nowNs - lastRenderNs < MIN_FRAME_GAP_NS -> {
                     droppedFrames++
+                    droppedLate++
                     codec.releaseOutputBuffer(index, false)
                 }
                 firstFrameShown && earlyUs > holdUs ->
@@ -1833,12 +1838,22 @@ class DnaEngineCore(
         }
 
         /** Wie spät die Bilder aus dem Decoder kommen (alle 5 s ins Protokoll, zur Fehlersuche auf Geräten). */
+        // Warum Bilder verworfen wurden (für das Protokoll): zu spät einzeln bzw. Sprung zum nächsten Schlüsselbild.
+        private var droppedLate = 0
+        private var skippedToKey = 0
+        private var maxBehindUs = 0L
+
         private fun noteLateness(earlyUs: Long) {
             lateSumUs += -earlyUs
             lateCount++
+            if (-earlyUs > maxBehindUs) maxBehindUs = -earlyUs
             val now = SystemClock.elapsedRealtime()
             if (now - lateLogAt >= 5_000 && lateCount > 0) {
-                DnaLog.i(TAG, "Bild: im Mittel ${lateSumUs / lateCount / 1000} ms spät, gezeigt $renderedFrames, verworfen $droppedFrames")
+                DnaLog.i(TAG, "Bild: im Mittel ${lateSumUs / lateCount / 1000} ms spät, gezeigt $renderedFrames, verworfen $droppedFrames" +
+                    (if (droppedLate + skippedToKey > 0) " (zu spät $droppedLate, bis Schlüsselbild $skippedToKey, am weitesten zurück ${maxBehindUs / 1000} ms)" else ""))
+                droppedLate = 0
+                skippedToKey = 0
+                maxBehindUs = 0
                 lateLogAt = now
                 lateSumUs = 0
                 lateCount = 0
