@@ -442,7 +442,26 @@ class TsDemuxer(private val output: Output) {
         private var lastTimeUs = NO_TIME
         private var frameUs = 40_000L
 
+        /**
+         * Nach verlorenen Daten (Lücke im Strom, meist beim Neuverbinden zum Anbieter) bauen die folgenden Bilder auf ein
+         * fehlendes auf: Der Decoder zeigte bis zum nächsten Schlüsselbild Schlieren und Klötzchen („verschwommen, kleine
+         * Bildstörungen“, Fire TV 13.11.). Jetzt erst ab dem nächsten Schlüsselbild weiter – das letzte saubere Bild bleibt
+         * so lange stehen; höchstens [WAIT_KEY_MAX_US], dann (bei sehr langen Abständen) doch weiter.
+         */
+        private var waitKey = false
+        private var waitSinceUs = NO_TIME
+        private var waitDropped = 0
+
+        private fun afterLoss() {
+            if (!waitKey) {
+                waitKey = true
+                waitSinceUs = NO_TIME
+                waitDropped = 0
+            }
+        }
+
         fun reset() {
+            waitKey = false
             size = 0
             scanned = 0
             auStart = -1
@@ -454,6 +473,7 @@ class TsDemuxer(private val output: Output) {
 
         /** Daten gingen verloren (Zähler-Lücke, kaputter Kopf): das laufende Bild ist unbrauchbar – verwerfen. */
         fun lost() {
+            afterLoss()
             if (auStart >= 0) {
                 // Ab der nächsten Bildgrenze weiter; was bis dahin kommt, gehört zum verworfenen Bild.
                 size = 0
@@ -487,6 +507,7 @@ class TsDemuxer(private val output: Output) {
          */
         fun gap(previousComplete: Boolean) {
             if (previousComplete && auStart >= 0) emit(auStart, size)
+            afterLoss()
             size = 0
             scanned = 0
             auStart = -1
@@ -599,7 +620,19 @@ class TsDemuxer(private val output: Output) {
                 if (d in 5_000..200_000) frameUs = d
             }
             lastTimeUs = time
-            output.onSample(Sample(track, data, time, isKeyframe(track.codec, data)))
+            val key = isKeyframe(track.codec, data)
+            if (waitKey) {
+                if (waitSinceUs == NO_TIME) waitSinceUs = time
+                val waited = time - waitSinceUs
+                if (!key && waited in 0 until WAIT_KEY_MAX_US) {
+                    waitDropped++
+                    return
+                }
+                waitKey = false
+                if (waitDropped > 0) DnaLog.i("DnaTs", "Lücke im Strom: $waitDropped Bilder bis zum nächsten " +
+                    (if (key) "Schlüsselbild" else "Bild nach ${WAIT_KEY_MAX_US / 1000} ms") + " ausgelassen (statt Bildfehlern)")
+            }
+            output.onSample(Sample(track, data, time, key))
         }
 
         /** Am Ende des Stroms: das letzte Bild ausgeben. */
@@ -625,6 +658,8 @@ class TsDemuxer(private val output: Output) {
         private const val SYNC = 0x47.toByte()
         private const val PAT_PID = 0
         private const val MAX_PES = 16 * 1024 * 1024
+        /** Nach verlorenen Daten höchstens so lange (Bildzeit) auf das nächste Schlüsselbild warten. */
+        private const val WAIT_KEY_MAX_US = 2_000_000L
         const val NO_TIME = Long.MIN_VALUE
 
         /** 33-Bit-PTS (90 kHz) in Mikrosekunden. */
