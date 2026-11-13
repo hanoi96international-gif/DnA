@@ -182,7 +182,12 @@ object Diagnostics {
         if (!short) file(SELFTEST_FILE)?.let { out.append("Letzter Test:\n").append(it).append('\n') }
         NativeCrashLog.lastRecent(context.filesDir, 48 * 3_600_000L)?.let { out.append("Letzter nativer Absturz (letzte 48 h) am ").append(if (short) it.take(1_500) else it).append('\n') }
 
-        file(CRASH_FILE)?.let { section("Letzter Absturz"); out.append(if (short) it.take(2_000) else it).append('\n') }
+        // Nur Abstürze der letzten 48 h, mit Datum: Ein alter, längst behobener Absturz las sich sonst wie ein neuer.
+        File(context.filesDir, CRASH_FILE).takeIf { it.isFile && System.currentTimeMillis() - it.lastModified() <= 48 * 3_600_000L }?.let { crash ->
+            val text = runCatching { crash.readText() }.getOrNull() ?: return@let
+            section("Letzter Absturz (${SimpleDateFormat("dd.MM. HH:mm", Locale.GERMANY).format(Date(crash.lastModified()))})")
+            out.append(if (short) text.take(2_000) else text).append('\n')
+        }
         file(CAST_FILE)?.let { section("Letzte Übertragung"); out.append(it).append('\n') }
         file(PLAYER_FILE)?.let { section("Letzte Wiedergabe"); out.append(if (short) it.lines().takeLast(40).joinToString("\n") else it).append('\n') }
 

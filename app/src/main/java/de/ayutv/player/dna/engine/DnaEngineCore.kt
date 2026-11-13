@@ -2012,7 +2012,20 @@ class DnaEngineCore(
                 clock.startFromAudio(firstPtsUs)
             }
             // Angehalten oder Vorrat leer: nicht weiter schreiben (AudioTrack ist pausiert).
-            while ((paused || (buffering && started)) && alive(gen)) Thread.sleep(20)
+            // Hier auch selbst prüfen, ob wieder genug Vorrat da ist: Nur dieser Thread beendet das Puffern. Kam nach einem
+            // leeren Vorrat das erste Stück an, als es noch nicht reichte, wartete der Ton hier ewig – mit 7 s Vorrat
+            // (Kurzbericht Fire TV 13.11., 21:26: „Hängt seit 6939 ms im Puffern … Bild 26440–33140 ms“), bis der Player
+            // den Sender neu startete.
+            while ((paused || (buffering && started)) && alive(gen)) {
+                if (!paused && buffering && started) {
+                    val enough = synchronized(lock) { bufferedAheadLocked() >= resumeBufferUs() || inputEnded }
+                    if (enough) {
+                        setBuffering(false)
+                        break
+                    }
+                }
+                Thread.sleep(20)
+            }
             ensurePlaying(t)
             pathOutputs++
             // Nicht blockierend schreiben: Eine Tonausgabe, die nichts annimmt (Durchreichen ohne Receiver), darf den
