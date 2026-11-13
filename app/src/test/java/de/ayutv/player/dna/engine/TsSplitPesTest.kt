@@ -202,7 +202,13 @@ class TsSplitPesTest {
             for (i in 0 until packets) if (i != drop) write(data, i * 188, 188)
         }.toByteArray()
         val (_, again) = demux(broken)
-        assertEquals("nur das unvollständige Bild fehlt", frames.size - 1, again.size)
+        // Das unvollständige Bild fehlt, und die folgenden bis zum nächsten Schlüsselbild (sie bauen auf ein fehlendes
+        // auf – der Decoder zeigte sonst Bildfehler), höchstens 2 s lang.
+        val resume = (k + 1 until frames.size).firstOrNull { frames[it].keyframe || frames[it].timeUs - frames[k + 1].timeUs >= 2_000_000L }
+            ?: frames.size
+        val expected = frames.filterIndexed { i, _ -> i < k || i >= resume }
+        assertEquals("bis zum nächsten Schlüsselbild ausgelassen", expected.size, again.size)
+        expected.zip(again).forEachIndexed { i, (a, b) -> assertArrayEquals("Inhalt Bild $i", a.data, b.data) }
         assertTrue("kein abgeschnittenes Bild", again.none { b -> frames.none { it.data.contentEquals(b.data) } })
         assertTrue(again.none { it.data.contentEquals(frames[k].data) })
     }
