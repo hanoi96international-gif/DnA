@@ -915,7 +915,7 @@ class PlayerActivity : ComponentActivity() {
             stats = stats.copy(frameRate = fromStream, frameRateMeasured = true, displayHz = frameRateMatcher.currentRefreshRate())
             memoryKey()?.let { container.playerMemory.rememberFrameRate(it, fromStream, isLive) }
             suggestFrameRateMatching()
-            if (settings.matchFrameRate) frameRateMatcher.match(fromStream)
+            if (afrActive) frameRateMatcher.match(fromStream)
             return
         }
         val frames = (p as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.let { (it.renderedFrames + it.droppedFrames).toLong() } ?: return
@@ -939,7 +939,7 @@ class PlayerActivity : ComponentActivity() {
         stats = stats.copy(frameRate = snapped, frameRateMeasured = true, displayHz = frameRateMatcher.currentRefreshRate())
         memoryKey()?.let { container.playerMemory.rememberFrameRate(it, snapped, isLive) }
         suggestFrameRateMatching()
-        if (settings.matchFrameRate) frameRateMatcher.match(snapped)
+        if (afrActive) frameRateMatcher.match(snapped)
     }
 
     /** Mehrfaches Nachladen in kurzer Zeit: größeren Puffer empfehlen (einmal pro Sitzung). */
@@ -1575,7 +1575,7 @@ class PlayerActivity : ComponentActivity() {
      * Stimmt die Schätzung nicht, korrigiert die Messung wie bisher.
      */
     private fun matchKnownFrameRate(key: String, live: Boolean) {
-        if (!settings.matchFrameRate) return
+        if (!settings.matchFrameRate || (live && settings.frameRateFilmsOnly)) return
         val memory = container.playerMemory
         val fps = memory.frameRate(key).takeIf { it > 0f } ?: if (live) memory.lastLiveFrameRate else 0f
         if (fps > 0f) frameRateMatcher.match(fps)
@@ -5204,6 +5204,9 @@ class PlayerActivity : ComponentActivity() {
         container.scope.launch { container.settings.update { it.copy(loudnessLevel = on) } }
     }
 
+    /** Bildrate anpassen – bei „nur Filme“ nicht im Live-TV (Beamer: kein Schwarzbild beim Umschalten). */
+    private val afrActive: Boolean get() = settings.matchFrameRate && !(isLive && settings.frameRateFilmsOnly)
+
     /** Ton-Bild-Abgleich in ms (positiv: Ton später). Wirkt sofort und gilt für dieses Gerät. */
     var avSyncMs by mutableStateOf(0); private set
 
@@ -5616,7 +5619,7 @@ class PlayerActivity : ComponentActivity() {
             },
         )
         video?.frameRate?.takeIf { it > 1f }?.let { fps -> memoryKey()?.let { container.playerMemory.rememberFrameRate(it, fps, isLive) } }
-        if (settings.matchFrameRate) video?.frameRate?.let(frameRateMatcher::match)
+        if (afrActive) video?.frameRate?.let(frameRateMatcher::match)
         suggestFrameRateMatching()
         checkDynamicRange(video)
     }

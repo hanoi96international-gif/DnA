@@ -141,6 +141,7 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
         }
     }
     var keyReport by remember { mutableStateOf<String?>(null) }
+    var avTest by remember { mutableStateOf(false) }
     var page by rememberSaveable { mutableStateOf(SettingsPage.PLAYLISTS) }
     // „Einfach“: nur die wichtigen Einstellungen; „Weitere Einstellungen“ blendet den Rest ein.
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
@@ -155,6 +156,19 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
 
     fun update(transform: (AppSettings) -> AppSettings) {
         scope.launch { container.settings.update(transform) }
+    }
+
+    if (avTest) {
+        val current = settings.avSyncMs
+        AvSyncTestDialog(
+            valueMs = current,
+            onChange = { ms ->
+                val value = ms.coerceIn(de.ayutv.data.AV_SYNC_MIN_MS, de.ayutv.data.AV_SYNC_MAX_MS)
+                de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = value * 1000L
+                update { it.copy(avSyncMs = value) }
+            },
+            onClose = { avTest = false },
+        )
     }
 
     var showRemote by remember { mutableStateOf(false) }
@@ -364,19 +378,31 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                     item {
                         SettingRow(
                             "Bildwiederholrate anpassen",
-                            onOff(settings.matchFrameRate),
+                            when {
+                                !settings.matchFrameRate -> "Aus"
+                                settings.frameRateFilmsOnly -> "Nur Filme und Serien"
+                                else -> "An"
+                            },
                             "Empfohlen: An. Deutsches TV läuft mit 50 Hz, Filme mit 23,976 Hz – der Fire TV gibt sonst 60 Hz aus, das ruckelt bei " +
                                 "Schwenks. Beim Umschalten ist das Bild 1–2 s schwarz (nur wenn sich die Rate ändert). Die Rate jedes Senders und " +
                                 "Films wird gemerkt: Beim nächsten Mal schaltet der Fernseher schon während des Ladens um, die Menüs bleiben dabei. " +
-                                "Fire TV: zusätzlich unter Einstellungen → Display & Audio → Display „Originalbildrate anpassen“ einschalten.",
+                                "Fire TV: zusätzlich unter Einstellungen → Display & Audio → Display „Originalbildrate anpassen“ einschalten. " +
+                                "„Nur Filme und Serien“: für Beamer, die bei jedem Wechsel lange schwarz werden – Live-TV bleibt dann bei der Rate der Menüs.",
                         ) {
                             de.ayutv.player.FrameRateMatcher.ignoredModeId = 0
-                            if (settings.matchFrameRate) {
+                            // An → Nur Filme → Aus → An
+                            if (settings.matchFrameRate && settings.frameRateFilmsOnly) {
                                 // Ausschalten: Menüs zurück auf den Standard des Fire TV.
                                 de.ayutv.player.FrameRateMatcher.keptModeId = 0
                                 (context as? android.app.Activity)?.let { de.ayutv.player.FrameRateMatcher.applyKept(it, enabled = false) }
                             }
-                            update { it.copy(matchFrameRate = !it.matchFrameRate) }
+                            update {
+                                when {
+                                    !it.matchFrameRate -> it.copy(matchFrameRate = true, frameRateFilmsOnly = false)
+                                    !it.frameRateFilmsOnly -> it.copy(frameRateFilmsOnly = true)
+                                    else -> it.copy(matchFrameRate = false, frameRateFilmsOnly = false)
+                                }
+                            }
                         }
                     }
                     item {
@@ -462,6 +488,14 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                             }
                         }
                     }
+                    item {
+                        SettingRow(
+                            "Testbild: Ton-Bild-Abgleich",
+                            "",
+                            "Piepton und weißer Blitz im Sekundentakt – so lange „Ton später“ oder „früher“ drücken, bis beide " +
+                                "genau zusammenfallen. Genauer als nach Gefühl beim Film.",
+                        ) { avTest = true }
+                    }
                     if (showAdvanced) item {
                         UserAgentRow(settings.userAgent) { ua -> update { it.copy(userAgent = ua) } }
                     }
@@ -513,7 +547,8 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                         }
                     }
                     item {
-                        SettingRow("Position", settings.subtitlePosition.label, "Etwas höher, wenn der Fernseher den unteren Rand abschneidet.") {
+                        SettingRow("Position", settings.subtitlePosition.label, "Etwas höher, wenn der Fernseher den unteren Rand abschneidet. Kinoformat: für 21:9-Leinwände, " +
+                            "auf denen der Rand eines 16:9-Bildes neben die Leinwand fällt – die Untertitel bleiben im Bild.") {
                             update { it.copy(subtitlePosition = it.subtitlePosition.cycle()) }
                         }
                     }
@@ -648,6 +683,17 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                             val next = de.ayutv.ui.theme.UiTheme.entries[(settings.uiTheme.ordinal + 1) % de.ayutv.ui.theme.UiTheme.entries.size]
                             de.ayutv.ui.theme.AyuColors.use(next, settings.accent)
                             update { it.copy(uiTheme = next) }
+                        }
+                    }
+                    item {
+                        SettingRow(
+                            "Ruhiger Hintergrund",
+                            onOff(settings.calmBackground),
+                            "Menüs ohne Hintergrundbild, nur in der dunklen Grundfarbe des Designs. Entlastet schwache Sticks " +
+                                "(flüssigeres Scrollen) und ist am Beamer dunkler. Farben und Akzent des Designs bleiben.",
+                        ) {
+                            de.ayutv.ui.theme.AyuColors.calm = !settings.calmBackground
+                            update { it.copy(calmBackground = !it.calmBackground) }
                         }
                     }
                     item {

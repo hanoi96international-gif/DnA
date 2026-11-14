@@ -348,6 +348,7 @@ fun PlayerScreen(activity: PlayerActivity) {
                     SubtitlePosition.LOW -> 20.dp
                     SubtitlePosition.NORMAL -> 40.dp
                     SubtitlePosition.HIGH -> 80.dp
+                    SubtitlePosition.CINEMA -> 98.dp
                 }
                 Text(
                     cue,

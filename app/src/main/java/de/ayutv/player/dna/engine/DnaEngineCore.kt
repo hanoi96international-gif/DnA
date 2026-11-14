@@ -990,7 +990,7 @@ class DnaEngineCore(
                 videoFailures = 0
                 // Scheiterten die Decoder des Geräts an genau dieser Art Bild schon einmal (etwa 4K HDR10 auf MediaTek):
                 // gleich der eigene – sonst kostet jeder Senderwechsel wieder mehrere Sekunden Fehlversuche.
-                useSoftwareVideo = softwareKey(cfg) in hardwareFailed && softVideoSupported(cfg.mime)
+                useSoftwareVideo = hardwareFailedRecently(softwareKey(cfg, live)) && softVideoSupported(cfg.mime)
                 if (useSoftwareVideo) DnaLog.i(TAG, "Bild: Decoder des Geräts scheiterten hieran schon – gleich eigener Software-Decoder")
                 val sps = if (cfg.mime == Codec.HEVC.mime) cfg.csd0?.let { runCatching { de.ayutv.player.HevcSps.find(it)?.describe() }.getOrNull() } else null
                 DnaLog.i(TAG, "Bild: ${cfg.mime} ${cfg.width}×${cfg.height} ${cfg.bitDepth} Bit" + (sps?.let { " · HEVC-Kopf: $it" } ?: "") +
@@ -1060,7 +1060,7 @@ class DnaEngineCore(
             val cfg = videoConfig
             if (cfg != null && softVideoSupported(cfg.mime)) {
                 useSoftwareVideo = true
-                rememberHardware(softwareKey(cfg), failed = true)
+                rememberHardware(softwareKey(cfg, live), failed = true)
                 listener.onInfo("$reason – eigener Software-Decoder")
             } else listener.onError("Bild-Decoder scheitern an diesem Stream ($reason)", fatal = true)
         } else listener.onInfo("$reason – nächster Decoder")
@@ -1841,7 +1841,7 @@ class DnaEngineCore(
                         if (videoStartUs == Long.MIN_VALUE) videoStartUs = ptsUs
                         videoFailures = 0
                         rememberVariant(name, variant)
-                        rememberHardware(softwareKey(config), failed = false)
+                        rememberHardware(softwareKey(config, live), failed = false)
                         listener.onFirstFrame()
                         startMark("erstes Bild gezeigt")
                         if (!audioPlayable) setBuffering(false)
@@ -2817,11 +2817,28 @@ class DnaEngineCore(
                 runCatching { decoderPrefs()?.all?.forEach { (k, v) -> if (k.startsWith("v:") && v is Int) map[k.removePrefix("v:")] = v } }
             }
         }
-        /** Arten Bild (Format, Bittiefe, 4K oder nicht), an denen alle Decoder des Geräts scheiterten (bis zum App-Neustart). */
-        private val hardwareFailed: MutableSet<String> by lazy {
-            java.util.concurrent.ConcurrentHashMap.newKeySet<String>().also { set ->
-                runCatching { decoderPrefs()?.getStringSet("failed", null)?.let { set.addAll(it) } }
+        /**
+         * Arten Bild (Format, Bittiefe, 4K oder nicht, Live oder Film), an denen alle Decoder des Geräts scheiterten, mit
+         * Zeitpunkt. Nach [HARDWARE_RETRY_MS] wird der Decoder des Geräts wieder versucht: Ein einziger Fehlschlag (etwa ein
+         * 4K-Live-Strom mit Formatwechsel auf MediaTek) schickte früher bis zum nächsten Update alles in 4K – auch Filme, die
+         * der Decoder des Geräts flüssig kann – in den viel langsameren Software-Decoder.
+         */
+        private val hardwareFailed: MutableMap<String, Long> by lazy {
+            java.util.concurrent.ConcurrentHashMap<String, Long>().also { map ->
+                runCatching {
+                    decoderPrefs()?.getStringSet("failed_at", null)?.forEach { entry ->
+                        val at = entry.substringAfterLast('@').toLongOrNull() ?: return@forEach
+                        map[entry.substringBeforeLast('@')] = at
+                    }
+                }
             }
+        }
+
+        private fun hardwareFailedRecently(key: String): Boolean {
+            val at = hardwareFailed[key] ?: return false
+            if (System.currentTimeMillis() - at < HARDWARE_RETRY_MS) return true
+            DnaLog.i(TAG, "Bild: Decoder des Geräts scheiterte hieran vor über ${HARDWARE_RETRY_MS / 3_600_000} h – neuer Versuch")
+            return false
         }
 
         /**
@@ -2844,10 +2861,16 @@ class DnaEngineCore(
         }
 
         private fun rememberHardware(key: String, failed: Boolean) {
-            val changed = if (failed) hardwareFailed.add(key) else hardwareFailed.remove(key)
-            if (changed) runCatching { decoderPrefs()?.edit()?.putStringSet("failed", HashSet(hardwareFailed))?.apply() }
+            val changed = if (failed) { hardwareFailed[key] = System.currentTimeMillis(); true } else hardwareFailed.remove(key) != null
+            if (changed) runCatching {
+                decoderPrefs()?.edit()?.putStringSet("failed_at", hardwareFailed.entries.mapTo(HashSet()) { "${it.key}@${it.value}" })?.apply()
+            }
         }
-        private fun softwareKey(cfg: VideoConfig) = "${cfg.mime}/${cfg.bitDepth}/${if (cfg.width >= 3000) "4k" else "hd"}"
+        /** Live und Film getrennt: Live-Ströme wechseln mitten drin das Format (daran scheitern manche Decoder), Dateien nicht. */
+        private fun softwareKey(cfg: VideoConfig, live: Boolean) =
+            "${cfg.mime}/${cfg.bitDepth}/${if (cfg.width >= 3000) "4k" else "hd"}/${if (live) "live" else "film"}"
+        /** Nach so langer Zeit wird ein gescheiterter Decoder des Geräts wieder versucht. */
+        private const val HARDWARE_RETRY_MS = 12L * 3_600_000
         /** Später als das ist ein Bild verworfen. */
         /** Bis so spät wird ein Bild noch gezeigt; danach nur, wenn seit dem letzten gezeigten [MIN_FRAME_GAP_NS] vergangen ist. */
         private const val LATE_US = 120_000L

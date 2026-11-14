@@ -81,6 +81,11 @@ enum class SubtitlePosition(val label: String, val bottomFraction: Float) {
     LOW("Ganz unten", 0.04f),
     NORMAL("Unten", 0.07f),
     HIGH("Etwas höher", 0.15f),
+    /**
+     * 21:9-Leinwand (Beamer so gezoomt, dass Kinoformat die Leinwand füllt): oben und unten fällt ein Streifen von je
+     * ~12,8 % neben die Leinwand. Untertitel daher im sichtbaren 2,39:1-Bereich, knapp über dessen Unterkante.
+     */
+    CINEMA("Im Kinoformat (21:9-Leinwand)", 0.18f),
 }
 
 /**
@@ -130,6 +135,11 @@ data class AppSettings(
     val liveCatchUp: Boolean = true,
     /** Standard an (seit 0.45.4): Deutsches TV hat 25/50 Bilder, der Fire TV gibt sonst 60 Hz aus und das Bild läuft ungleichmäßig. */
     val matchFrameRate: Boolean = true,
+    /**
+     * Bildrate nur bei Filmen und Serien anpassen, Live-TV bleibt bei der Rate der Menüs: Beamer brauchen für jeden
+     * Wechsel der Bildfrequenz oft mehrere Sekunden Schwarzbild.
+     */
+    val frameRateFilmsOnly: Boolean = false,
     val liveFormat: LiveFormat = LiveFormat.TS,
     val userAgent: String = DEFAULT_USER_AGENT,
     val zapWithUpDown: Boolean = true,
@@ -173,6 +183,8 @@ data class AppSettings(
     val subtitleBackground: SubtitleBackground = SubtitleBackground.OUTLINE,
     val subtitlePosition: SubtitlePosition = SubtitlePosition.NORMAL,
     val screenMargin: ScreenMargin = ScreenMargin.NONE,
+    /** Menüs ohne Hintergrundbild, nur in der Grundfarbe des Designs (schwache Sticks, Beamer). */
+    val calmBackground: Boolean = false,
     /** Ton-Bild-Abgleich in ms (positiv: Bild früher / Ton später), je Gerät – Beamer und Fernseher verzögern das Bild. */
     val avSyncMs: Int = 0,
     val audioMode: AudioMode = AudioMode.NORMAL,
@@ -270,6 +282,7 @@ class SettingsStore(private val context: Context) {
         val displaySync = booleanPreferencesKey("display_sync")
         val liveCatchUp = booleanPreferencesKey("live_catch_up")
         val afr = booleanPreferencesKey("match_frame_rate_v2")
+        val afrFilmsOnly = booleanPreferencesKey("match_frame_rate_films_only")
         val liveFormat = stringPreferencesKey("live_format")
         val userAgent = stringPreferencesKey("user_agent")
         val zap = booleanPreferencesKey("zap_up_down")
@@ -296,6 +309,7 @@ class SettingsStore(private val context: Context) {
         val subBackground = stringPreferencesKey("subtitle_background")
         val subPosition = stringPreferencesKey("subtitle_position")
         val screenMargin = stringPreferencesKey("screen_margin")
+        val calmBackground = booleanPreferencesKey("calm_background")
         val avSyncMs = intPreferencesKey("av_sync_ms")
         val audioMode = stringPreferencesKey("audio_mode")
         val osKey = stringPreferencesKey("opensubtitles_key")
@@ -420,6 +434,7 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.displaySync] = next.displaySync
             prefs[Keys.liveCatchUp] = next.liveCatchUp
             prefs[Keys.afr] = next.matchFrameRate
+            prefs[Keys.afrFilmsOnly] = next.frameRateFilmsOnly
             prefs[Keys.liveFormat] = next.liveFormat.name
             prefs[Keys.userAgent] = next.userAgent
             prefs[Keys.zap] = next.zapWithUpDown
@@ -446,6 +461,7 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.subBackground] = next.subtitleBackground.name
             prefs[Keys.subPosition] = next.subtitlePosition.name
             prefs[Keys.screenMargin] = next.screenMargin.name
+            prefs[Keys.calmBackground] = next.calmBackground
             prefs[Keys.avSyncMs] = next.avSyncMs.coerceIn(AV_SYNC_MIN_MS, AV_SYNC_MAX_MS)
             prefs[Keys.audioMode] = next.audioMode.name
             prefs[Keys.osKey] = next.openSubtitlesKey.trim()
@@ -492,6 +508,7 @@ class SettingsStore(private val context: Context) {
         displaySync = this[Keys.displaySync] ?: true,
         liveCatchUp = this[Keys.liveCatchUp] ?: true,
         matchFrameRate = this[Keys.afr] ?: true,
+        frameRateFilmsOnly = this[Keys.afrFilmsOnly] ?: false,
         liveFormat = enumOrDefault(this[Keys.liveFormat], LiveFormat.TS),
         userAgent = this[Keys.userAgent]?.takeIf { it.isNotBlank() } ?: AppSettings.DEFAULT_USER_AGENT,
         zapWithUpDown = this[Keys.zap] ?: true,
@@ -518,6 +535,7 @@ class SettingsStore(private val context: Context) {
         subtitleBackground = enumOrDefault(this[Keys.subBackground], SubtitleBackground.OUTLINE),
         subtitlePosition = enumOrDefault(this[Keys.subPosition], SubtitlePosition.NORMAL),
         screenMargin = enumOrDefault(this[Keys.screenMargin], ScreenMargin.NONE),
+        calmBackground = this[Keys.calmBackground] ?: false,
         avSyncMs = (this[Keys.avSyncMs] ?: 0).coerceIn(AV_SYNC_MIN_MS, AV_SYNC_MAX_MS),
         audioMode = enumOrDefault(this[Keys.audioMode], AudioMode.NORMAL),
         openSubtitlesKey = this[Keys.osKey].orEmpty(),

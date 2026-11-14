@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ButtonColors
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.CardBorder
@@ -87,31 +88,65 @@ fun FitToScreen(content: @Composable () -> Unit) {
         store.settings.map { it.screenMargin.fraction }.distinctUntilChanged().onEach { lastMargin = it }
     }
     val margin by marginFlow.collectAsState(initial = lastMargin)
+    // Testbild beim Einstellen: einige Sekunden ein Rahmen mit Eckmarken genau am Rand der genutzten Fläche.
+    var frameUntil by remember { mutableStateOf(0L) }
+    var seenMargin by remember { mutableStateOf<Float?>(null) }
+    androidx.compose.runtime.LaunchedEffect(margin) {
+        val before = seenMargin
+        seenMargin = margin
+        if (before == null || before == margin) return@LaunchedEffect
+        frameUntil = android.os.SystemClock.elapsedRealtime() + FRAME_SHOW_MS
+        kotlinx.coroutines.delay(FRAME_SHOW_MS)
+        frameUntil = 0L
+    }
+    val showFrame = frameUntil > 0L
     // Hochformat: so verkleinern, dass die Seiten 600 dp breit sind (Listen und Raster passen nebeneinander).
-    val factor = if (configuration.screenHeightDp > configuration.screenWidthDp) {
+    val base = if (configuration.screenHeightDp > configuration.screenWidthDp) {
         (configuration.screenWidthDp / PORTRAIT_WIDTH_DP).coerceIn(0.55f, 1f)
     } else {
         (configuration.screenHeightDp / TV_HEIGHT_DP).coerceIn(0.55f, 1f)
-    } * (1f - 2f * margin)
-    val scaled: @Composable () -> Unit = {
-        if (factor >= 0.99f) {
-            content()
-        } else {
-            CompositionLocalProvider(LocalDensity provides Density(density.density * factor, density.fontScale), content = content)
-        }
     }
-    if (margin <= 0f) {
-        scaled()
-    } else {
-        androidx.compose.foundation.layout.BoxWithConstraints(
-            Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black),
-        ) {
-            androidx.compose.foundation.layout.Box(
-                Modifier.fillMaxSize().padding(horizontal = maxWidth * margin, vertical = maxHeight * margin),
-            ) { scaled() }
+    val factor = base * (1f - 2f * margin)
+    // Immer derselbe Aufbau (nur der Rand ändert sich): Ein Wechsel der Verschachtelung baute sonst die ganze
+    // Oberfläche neu auf und warf einen aus der geöffneten Seite.
+    androidx.compose.foundation.layout.Box(
+        Modifier.fillMaxSize()
+            .then(if (margin > 0f) Modifier.background(androidx.compose.ui.graphics.Color.Black) else Modifier)
+            .padding(
+                horizontal = (configuration.screenWidthDp * margin).dp,
+                vertical = (configuration.screenHeightDp * margin).dp,
+            ),
+    ) {
+        CompositionLocalProvider(
+            LocalDensity provides if (factor >= 0.99f) density else Density(density.density * factor, density.fontScale),
+            content = content,
+        )
+        if (showFrame) EdgeFrame()
+    }
+}
+
+/** Rahmen mit Eckmarken: Sind alle vier Ecken ganz zu sehen, passt der Bildrand. */
+@Composable
+private fun EdgeFrame() {
+    val color = de.ayutv.ui.theme.AyuColors.Accent
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+        val stroke = 4.dp.toPx()
+        val arm = size.minDimension * 0.08f
+        drawRect(color, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+        val corners = listOf(
+            androidx.compose.ui.geometry.Offset(0f, 0f) to androidx.compose.ui.geometry.Offset(1f, 1f),
+            androidx.compose.ui.geometry.Offset(size.width, 0f) to androidx.compose.ui.geometry.Offset(-1f, 1f),
+            androidx.compose.ui.geometry.Offset(0f, size.height) to androidx.compose.ui.geometry.Offset(1f, -1f),
+            androidx.compose.ui.geometry.Offset(size.width, size.height) to androidx.compose.ui.geometry.Offset(-1f, -1f),
+        )
+        for ((corner, dir) in corners) {
+            drawLine(color, corner, corner + androidx.compose.ui.geometry.Offset(dir.x * arm, 0f), strokeWidth = stroke * 3)
+            drawLine(color, corner, corner + androidx.compose.ui.geometry.Offset(0f, dir.y * arm), strokeWidth = stroke * 3)
         }
     }
 }
+
+private const val FRAME_SHOW_MS = 6_000L
 
 /** Zuletzt gelesener Bildrand: neue Bildschirme (Player) starten gleich richtig, ohne erst zu springen. */
 @Volatile
