@@ -197,8 +197,8 @@ fun GuideScreen() {
     // Im Player die Senderliste der hier gewählten Gruppe (auch eigene Gruppe oder Favoriten), nicht die des Anbieters.
     fun startLive(channel: ChannelEntity) {
         leftForPlayer = true
-        if (activeGroup == FAVORITES_GROUP) PlayerActivity.startLive(context, channel.key, null, favoritesOnly = true)
-        else PlayerActivity.startLive(context, channel.key, activeGroup ?: channel.groupTitle)
+        if (activeGroup == FAVORITES_GROUP) PlayerActivity.startLive(context, channel.key, null, favoritesOnly = true, fromGuide = true)
+        else PlayerActivity.startLive(context, channel.key, activeGroup ?: channel.groupTitle, fromGuide = true)
     }
     val play: (ChannelEntity, ProgrammeEntity?) -> Unit = { channel, programme ->
         val now = System.currentTimeMillis()

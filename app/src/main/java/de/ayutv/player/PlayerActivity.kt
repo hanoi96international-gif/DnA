@@ -1500,7 +1500,12 @@ class PlayerActivity : ComponentActivity() {
         groupMode = true
         lifecycleScope.launch {
             val groups = runCatching { container.content.groups.first() }.getOrDefault(emptyList())
-            groupChoices = listOf<Pair<String?, String>>(FAVORITES_GROUP to "★ Favoriten", null to "Alle Sender") +
+            // Eigene Gruppen wie in Live TV gleich nach den Favoriten – sie fehlten hier, und waren alle anderen Gruppen
+            // ausgeblendet, war die Liste bis auf Favoriten und „Alle Sender“ leer.
+            val own = runCatching { container.content.customGroups.first() }.getOrDefault(emptyList())
+            groupChoices = listOf<Pair<String?, String>>(FAVORITES_GROUP to "★ Favoriten") +
+                own.map { de.ayutv.data.repo.customGroupKey(it.id) to "📁 ${it.name}  ·  ${it.count}" } +
+                listOf<Pair<String?, String>>(null to "Alle Sender") +
                 groups.map { it.name to "${it.name}  ·  ${it.count}" }
         }
     }
@@ -2026,7 +2031,7 @@ class PlayerActivity : ComponentActivity() {
                         // Übersetzung meist binnen einer Sekunde: so lange nichts zeigen, statt Englisch und dann Deutsch.
                         val waitForOnline = entry != null && translated == null && !bitmap && onlineTranslation() &&
                             position - entry.startMs < ONLINE_HOLD_MS
-                        translatedCue = translated ?: if (bitmap || waitForOnline) null else entry?.text
+                        translatedCue = (translated ?: if (bitmap || waitForOnline) null else entry?.text)?.let(SubtitleLines::dedupe)
                         originalVisible = bitmap && entry != null && translated == null
                     }
                     delay(100)
@@ -2468,7 +2473,7 @@ class PlayerActivity : ComponentActivity() {
                 val shown = externalTexts
                 translatedCue = cues.indices.filter { cues[it].start <= at && cues[it].end > at }
                     .takeIf { it.isNotEmpty() }
-                    ?.joinToString("\n") { shown?.get(it) ?: cues[it].text }
+                    ?.let { now -> SubtitleLines.distinctLines(now.map { shown?.get(it) ?: cues[it].text }).ifEmpty { null } }
                 delay(100)
             }
         }
@@ -3317,7 +3322,7 @@ class PlayerActivity : ComponentActivity() {
         val target = liveTranslateTarget ?: return
         // Mitgelesene Spur: Anzeige und Übersetzung laufen mit Vorlauf (startAhead).
         if (aheadFormat?.let { embedded?.hasEntries(it) } == true) return
-        val text = cueGroup.cues.mapNotNull { it.text?.toString()?.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+        val text = SubtitleLines.distinctLines(cueGroup.cues.mapNotNull { it.text?.toString()?.trim() })
         if (text.isEmpty()) {
             translatedCue = null
             return
@@ -5711,6 +5716,8 @@ class PlayerActivity : ComponentActivity() {
                     // verlässt den Player (dann zeigt der Fernseher wieder den gespiegelten Handybildschirm).
                     overlay == Overlay.CHANNELS && mirrorDisplay != null -> finish()
                     overlay != Overlay.NONE -> closeOverlay()
+                    // Aus dem TV-Guide gekommen: Zurück führt wieder in den TV-Guide (dort steht der Fokus noch auf der Sendung).
+                    isLive && intent.getBooleanExtra(EXTRA_FROM_GUIDE, false) -> finish()
                     isLive && channels.isNotEmpty() && mirrorDisplay != null -> openChannelList()
                     // Live-TV: erst Senderliste mit kleinem Bild, statt sofort zu den Menüs.
                     // (Nur mit genug Breite für Liste und Bild daneben, nicht auf dem Handy im Hochformat.)
@@ -6062,6 +6069,8 @@ class PlayerActivity : ComponentActivity() {
         /** Kategorie „Favoriten“ in der Auswahl der Senderliste. */
         private const val FAVORITES_GROUP = "\u0000favoriten"
         private const val EXTRA_FAVORITES = "favorites"
+        /** Aus dem TV-Guide gestartet: Zurück führt direkt wieder dorthin (statt erst zur Senderliste). */
+        private const val EXTRA_FROM_GUIDE = "from_guide"
         private const val EXTRA_CAST_ON_START = "cast_on_start"
         /** Andere Sender mit derselben Übertragung (Sport-Guide): Ausweichen, wenn alle Fassungen ausfallen. */
         private const val EXTRA_ALTERNATIVES = "alternatives"
@@ -6099,8 +6108,10 @@ class PlayerActivity : ComponentActivity() {
 
         fun liveIntent(
             context: Context, channelKey: String, group: String?, favoritesOnly: Boolean = false, alternatives: List<String> = emptyList(),
+            fromGuide: Boolean = false,
         ): Intent =
             Intent(context, PlayerActivity::class.java)
+                .putExtra(EXTRA_FROM_GUIDE, fromGuide)
                 .putExtra(EXTRA_CHANNEL_KEY, channelKey)
                 .putExtra(EXTRA_GROUP, group)
                 .putExtra(EXTRA_FAVORITES, favoritesOnly)
@@ -6117,7 +6128,8 @@ class PlayerActivity : ComponentActivity() {
 
         fun startLive(
             context: Context, channelKey: String, group: String?, favoritesOnly: Boolean = false, alternatives: List<String> = emptyList(),
-        ) = context.startActivity(liveIntent(context, channelKey, group, favoritesOnly, alternatives))
+            fromGuide: Boolean = false,
+        ) = context.startActivity(liveIntent(context, channelKey, group, favoritesOnly, alternatives, fromGuide))
 
         fun startVod(context: Context, request: VodRequest, fromStart: Boolean = false) =
             context.startActivity(vodIntent(context, request).putExtra(EXTRA_FROM_START, fromStart))
