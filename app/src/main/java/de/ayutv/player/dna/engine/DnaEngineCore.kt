@@ -907,6 +907,12 @@ class DnaEngineCore(
 
     private fun startBufferReached(): Boolean = synchronized(lock) { startBufferReachedLocked() }
 
+    /** Wie weit der Ton-Vorrat über die Uhr hinausreicht (µs); nur unter [lock]. */
+    private fun audioAheadLocked(): Long {
+        val now = if (clock.started) clock.nowUs() else seekTargetUs
+        return audioQueue.lastOrNull()?.let { (it.timeUs - now).coerceAtLeast(0) } ?: 0L
+    }
+
     /**
      * [forAudio]: Der Ton prüft, ob ab dem ersten gezeigten Bild genug Vorrat da ist. Der Bild-Decoder (der dieses erste
      * Bild erst liefert) prüft wie bisher ab dem ersten Bild im Vorrat.
@@ -961,7 +967,13 @@ class DnaEngineCore(
                 }
                 videoQueue.firstOrNull()
             } ?: return
-            if (!startBufferReached()) return
+            // Film nach dem Spulen: Das Schlüsselbild liegt vor der Zielstelle (bei 4K oft 5 s und mehr). Den Decoder gleich
+            // anlegen und die Bilder bis zur Zielstelle schon dekodieren (und verwerfen), während der Rest noch lädt – wie
+            // ExoPlayer. Früher wartete er auf den ganzen Startvorrat hinter der Zielstelle und dekodierte erst danach:
+            // Spulen in 4K dauerte über die langsame Leitung 10–13 s (Kurzbericht Fire TV 14.11.: „Bild-Decoder keiner“).
+            // Die Uhr startet wie bisher erst mit genug Vorrat (der Ton wartet darauf).
+            val prerollSeek = !live && first.timeUs < seekTargetUs - 1_000
+            if (!prerollSeek && !startBufferReached()) return
             // Schlüsselbild ohne eigene Parametersätze: mit den zuletzt gesehenen (der Decoder bekommt sie als csd).
             val cfg = VideoConfig.forTrack(first.track, first.data)
                 ?: parameterSets?.takeIf { parameterSetsTrack == first.track }?.let { VideoConfig.forTrack(first.track, it + first.data) }
@@ -2033,7 +2045,9 @@ class DnaEngineCore(
             // den Sender neu startete.
             while ((paused || (buffering && started)) && alive(gen)) {
                 if (!paused && buffering && started) {
-                    val enough = synchronized(lock) { bufferedAheadLocked() >= resumeBufferUs() || inputEnded }
+                    // Der Ton selbst muss genug haben (nicht nur das Bild): sonst ging es weiter, der Ton war gleich wieder
+                    // leer, und das Puffern begann von vorn.
+                    val enough = synchronized(lock) { audioAheadLocked() >= resumeBufferUs() || inputEnded }
                     if (enough) {
                         setBuffering(false)
                         break
@@ -2172,7 +2186,9 @@ class DnaEngineCore(
                         lock.wait(if (emptySince > 0L && !buffering) 20 else 50)
                     }
                     audioCollecting = false
-                    if (buffering && started && (bufferedAheadLocked() >= resumeBufferUs() || inputEnded)) setBuffering(false)
+                    // Weiter erst mit genug Ton (der Ton treibt die Uhr): Mit genug Bild, aber ohne Ton war der Vorrat gleich
+                    // wieder leer – Fire TV 14.11.: 2348 Ruckler in 13 h bei nur 50 Neuverbindungen.
+                    if (buffering && started && (audioAheadLocked() >= resumeBufferUs() || inputEnded)) setBuffering(false)
                     audioQueue.removeFirstOrNull()?.also { queuedBytes -= it.data.size; lock.notifyAll() }
                 }
                 if (sample == null) {
@@ -2200,7 +2216,7 @@ class DnaEngineCore(
                 }
                 joinLate = false
                 if (buffering && started) {
-                    val enough = synchronized(lock) { bufferedAheadLocked() >= resumeBufferUs() || inputEnded }
+                    val enough = synchronized(lock) { audioAheadLocked() >= resumeBufferUs() || inputEnded }
                     if (enough) setBuffering(false)
                 }
                 // Zeitsprung im Ton (Live: Neuverbinden, Werbeeinblendung): Uhr neu, Ton neu anlegen.
