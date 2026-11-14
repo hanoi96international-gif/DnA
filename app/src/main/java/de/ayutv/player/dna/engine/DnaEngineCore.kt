@@ -1112,7 +1112,9 @@ class DnaEngineCore(
         /** Bilder als 10-Bit-Halbfließkomma für die HDR-Anzeige? null = noch nicht entschieden (erstes Bild). */
         @Volatile private var halfOut: Boolean? = null
         /** Display kann HDR10, und die Grafik kann eine BT.2020/PQ-Fläche anlegen. */
-        private val hdrCapable: Boolean = displayHdr10() && GlYuvRenderer.hdrAvailable
+        // Echte HDR-Ausgabe (BT.2020/PQ-Fläche) vorerst aus: Auf dem Xiaomi 11T war das Bild damit stark rotstichig und
+        // zu dunkel (Fehlerbericht 14.11.). Bis das auf Geräten geprüft ist, wie vorher HDR → SDR umgerechnet.
+        private val hdrCapable: Boolean = HDR_SOFTWARE_OUTPUT && displayHdr10() && GlYuvRenderer.hdrAvailable
 
         // Sparstufe (nur auf dem Dekodier-Thread): 4K ab Stufe 1 (Entblockung nur bei Bildern ohne Bezug aus) –
         // so macht es VLC auf schnellen Handys immer, ohne sichtbaren Unterschied.
@@ -2918,6 +2920,8 @@ class DnaEngineCore(
         private const val PREVIOUS_AUDIO_WAIT_MS = 1_500L
         private const val PHASE_OPENING = "öffnet die Tonausgabe"
         private const val STUCK_LOG_MS = 6_000L
+        /** Software-Decoder: HDR10 als echtes HDR an das Display (statt nach SDR umgerechnet). Siehe hdrCapable. */
+        private const val HDR_SOFTWARE_OUTPUT = false
         /** Wiederholung nach dem Neuverbinden: Bilder dürfen in Dekodier-Reihenfolge so weit zurückliegen (B-Bilder). */
         private const val REPLAY_REORDER_US = 1_000_000L
         private const val REPLAY_AUDIO_US = 100_000L
