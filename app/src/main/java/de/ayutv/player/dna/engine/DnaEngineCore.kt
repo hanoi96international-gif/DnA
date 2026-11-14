@@ -195,6 +195,8 @@ class DnaEngineCore(
     @Volatile var droppedFrames = 0
         private set
     @Volatile var renderedFrames = 0
+    /** Zuletzt gemessene Geschwindigkeit des Bild-Decoders in % der Echtzeit (100 = schafft den Strom). */
+    @Volatile var decoderSpeedPercent = 100
         private set
     /** Name des laufenden Bild-Decoders (Anzeige). */
     @Volatile var videoDecoderName: String? = null
@@ -1956,6 +1958,7 @@ class DnaEngineCore(
                 speedStartPts = ptsUs
             } else if (now - speedStartMs >= 2_000) {
                 decodeSpeed = (ptsUs - speedStartPts) / 1000.0 / (now - speedStartMs)
+                decoderSpeedPercent = (decodeSpeed * 100).toInt()
                 speedMeasured = true
                 speedStartMs = now
                 speedStartPts = ptsUs
