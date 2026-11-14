@@ -83,6 +83,18 @@ enum class SubtitlePosition(val label: String, val bottomFraction: Float) {
     HIGH("Etwas höher", 0.15f),
 }
 
+/**
+ * Bildrand ausgleichen: Fernseher mit Overscan und Beamer (Trapezkorrektur, Leinwand-Maske) schneiden den Rand ab.
+ * Die ganze App samt Video rückt um diesen Anteil je Seite nach innen, damit Menüs, Uhr und Untertitel sichtbar bleiben.
+ */
+enum class ScreenMargin(val label: String, val fraction: Float) {
+    NONE("Aus", 0f),
+    SMALL("2,5 %", 0.025f),
+    MEDIUM("5 %", 0.05f),
+    LARGE("7,5 %", 0.075f),
+    XLARGE("10 %", 0.10f),
+}
+
 /** Ton: normal, Nachtmodus (leise Stellen lauter, laute leiser) oder Dialoge hervorheben. */
 enum class AudioMode(val label: String) {
     NORMAL("Normal"),
@@ -148,6 +160,7 @@ data class AppSettings(
     val subtitleColor: SubtitleColor = SubtitleColor.WHITE,
     val subtitleBackground: SubtitleBackground = SubtitleBackground.OUTLINE,
     val subtitlePosition: SubtitlePosition = SubtitlePosition.NORMAL,
+    val screenMargin: ScreenMargin = ScreenMargin.NONE,
     val audioMode: AudioMode = AudioMode.NORMAL,
     /** Untertitel bei OpenSubtitles suchen, wenn der Film selbst keine passenden hat. */
     val onlineSubtitles: Boolean = true,
@@ -268,6 +281,7 @@ class SettingsStore(private val context: Context) {
         val subColor = stringPreferencesKey("subtitle_color")
         val subBackground = stringPreferencesKey("subtitle_background")
         val subPosition = stringPreferencesKey("subtitle_position")
+        val screenMargin = stringPreferencesKey("screen_margin")
         val audioMode = stringPreferencesKey("audio_mode")
         val osKey = stringPreferencesKey("opensubtitles_key")
         val osOn = booleanPreferencesKey("opensubtitles_on")
@@ -416,6 +430,7 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.subColor] = next.subtitleColor.name
             prefs[Keys.subBackground] = next.subtitleBackground.name
             prefs[Keys.subPosition] = next.subtitlePosition.name
+            prefs[Keys.screenMargin] = next.screenMargin.name
             prefs[Keys.audioMode] = next.audioMode.name
             prefs[Keys.osKey] = next.openSubtitlesKey.trim()
             prefs[Keys.osOn] = next.onlineSubtitles
@@ -486,6 +501,7 @@ class SettingsStore(private val context: Context) {
         subtitleColor = enumOrDefault(this[Keys.subColor], SubtitleColor.WHITE),
         subtitleBackground = enumOrDefault(this[Keys.subBackground], SubtitleBackground.OUTLINE),
         subtitlePosition = enumOrDefault(this[Keys.subPosition], SubtitlePosition.NORMAL),
+        screenMargin = enumOrDefault(this[Keys.screenMargin], ScreenMargin.NONE),
         audioMode = enumOrDefault(this[Keys.audioMode], AudioMode.NORMAL),
         openSubtitlesKey = this[Keys.osKey].orEmpty(),
         onlineSubtitles = this[Keys.osOn] ?: true,

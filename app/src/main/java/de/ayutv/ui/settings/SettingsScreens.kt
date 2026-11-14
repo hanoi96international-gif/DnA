@@ -638,6 +638,15 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                     }
                     item {
                         SettingRow(
+                            "Bildrand ausgleichen (Fernseher, Beamer)",
+                            settings.screenMargin.label,
+                            "Schneidet der Fernseher (Overscan) oder der Beamer (Trapezkorrektur, Leinwand-Rahmen) den Rand ab, " +
+                                "rücken Menüs, Uhr, Untertitel und Bild um diesen Anteil nach innen. Richtig ist es, wenn der " +
+                                "Rand dieser Seite gerade ganz zu sehen ist. OK wechselt.",
+                        ) { update { it.copy(screenMargin = it.screenMargin.cycle()) } }
+                    }
+                    item {
+                        SettingRow(
                             "Akzentfarbe",
                             settings.accent.label,
                             "Farbe von Auswahlrahmen, Fortschritt und Hervorhebungen – zu jedem Design frei wählbar. OK wechselt.",

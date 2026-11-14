@@ -6,7 +6,14 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,18 +81,41 @@ val usingTouch: Boolean
 fun FitToScreen(content: @Composable () -> Unit) {
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
+    // Bildrand ausgleichen (Overscan am Fernseher, Trapezkorrektur am Beamer): alles rückt nach innen.
+    val store = de.ayutv.ui.LocalContainer.current.settings
+    val marginFlow = remember(store) {
+        store.settings.map { it.screenMargin.fraction }.distinctUntilChanged().onEach { lastMargin = it }
+    }
+    val margin by marginFlow.collectAsState(initial = lastMargin)
     // Hochformat: so verkleinern, dass die Seiten 600 dp breit sind (Listen und Raster passen nebeneinander).
     val factor = if (configuration.screenHeightDp > configuration.screenWidthDp) {
         (configuration.screenWidthDp / PORTRAIT_WIDTH_DP).coerceIn(0.55f, 1f)
     } else {
         (configuration.screenHeightDp / TV_HEIGHT_DP).coerceIn(0.55f, 1f)
+    } * (1f - 2f * margin)
+    val scaled: @Composable () -> Unit = {
+        if (factor >= 0.99f) {
+            content()
+        } else {
+            CompositionLocalProvider(LocalDensity provides Density(density.density * factor, density.fontScale), content = content)
+        }
     }
-    if (factor >= 0.99f) {
-        content()
+    if (margin <= 0f) {
+        scaled()
     } else {
-        CompositionLocalProvider(LocalDensity provides Density(density.density * factor, density.fontScale), content = content)
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black),
+        ) {
+            androidx.compose.foundation.layout.Box(
+                Modifier.fillMaxSize().padding(horizontal = maxWidth * margin, vertical = maxHeight * margin),
+            ) { scaled() }
+        }
     }
 }
+
+/** Zuletzt gelesener Bildrand: neue Bildschirme (Player) starten gleich richtig, ohne erst zu springen. */
+@Volatile
+private var lastMargin = 0f
 
 private const val TV_HEIGHT_DP = 540f
 private const val PORTRAIT_WIDTH_DP = 600f
