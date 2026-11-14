@@ -448,6 +448,20 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                             "Laute Werbung und leise Sender kommen auf ähnliche Lautstärke (wirkt, wenn der Ton im Gerät dekodiert wird). Auch im Film über ☰.",
                         ) { update { it.copy(loudnessLevel = !it.loudnessLevel) } }
                     }
+                    item {
+                        SettingRow(
+                            "Ton-Bild-Abgleich (Lippensynchron)",
+                            de.ayutv.data.avSyncLabel(settings.avSyncMs),
+                            "Beamer und Fernseher mit Bildverbesserung zeigen das Bild verzögert, Soundbar oder Receiver spielen " +
+                                "den Ton sofort. Kommt der Ton vor den Lippen: später stellen. Feiner im Film über ☰ → Klang " +
+                                "(20-ms-Schritte, wirkt sofort). OK wechselt.",
+                        ) {
+                            update {
+                                val steps = listOf(0, 40, 80, 120, 160, 200, 250, 300, -40, -80, -120)
+                                it.copy(avSyncMs = steps[(steps.indexOf(it.avSyncMs) + 1) % steps.size])
+                            }
+                        }
+                    }
                     if (showAdvanced) item {
                         UserAgentRow(settings.userAgent) { ua -> update { it.copy(userAgent = ua) } }
                     }

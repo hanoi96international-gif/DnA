@@ -1206,7 +1206,7 @@ class DnaEngineCore(
                 return
             }
             if (firstFrameShown && clock.started) {
-                val earlyUs = ((ptsUs - clock.nowUs()) / playSpeed).toLong()
+                val earlyUs = ((ptsUs - clock.nowUs() - avSyncUs) / playSpeed).toLong()
                 // Weit daneben (Sprung im Live-Strom) entscheidet die Anzeige (stellt die Uhr neu).
                 if (earlyUs < -LATE_US && !(live && kotlin.math.abs(earlyUs) > JUMP_US)) {
                     decoder.drop()
@@ -1348,7 +1348,7 @@ class DnaEngineCore(
             if (!clock.started) clock.startFromVideo(ptsUs, hasAudio = audioPlayable)
             while (alive() && firstFrameShown && (paused || buffering)) Thread.sleep(20)
             if (!alive()) return
-            var earlyUs = ((ptsUs - clock.nowUs()) / playSpeed).toLong()
+            var earlyUs = ((ptsUs - clock.nowUs() - avSyncUs) / playSpeed).toLong()
             if (live && kotlin.math.abs(earlyUs) > JUMP_US) {
                 clock.reset()
                 clock.startFromVideo(ptsUs, hasAudio = audioPlayable)
@@ -1363,7 +1363,7 @@ class DnaEngineCore(
             while (firstFrameShown && alive() && earlyUs > 2_000) {
                 Thread.sleep((earlyUs / 1000).coerceIn(1, 500))
                 if (paused || buffering) return show(renderer, frame)
-                earlyUs = ((ptsUs - clock.nowUs()) / playSpeed).toLong()
+                earlyUs = ((ptsUs - clock.nowUs() - avSyncUs) / playSpeed).toLong()
             }
             if (!alive()) return
             renderer.draw(frame, System.nanoTime() + earlyUs.coerceAtLeast(0) * 1000)
@@ -1795,7 +1795,7 @@ class DnaEngineCore(
                 videoHandler?.postDelayed({ if (!released) guarded { render(index, ptsUs) } }, 20)
                 return
             }
-            val earlyUs = ((ptsUs - clock.nowUs()) / playSpeed).toLong()
+            val earlyUs = ((ptsUs - clock.nowUs() - avSyncUs) / playSpeed).toLong()
             if (live && kotlin.math.abs(earlyUs) > JUMP_US) {
                 // Zeitsprung im Bild (Live): Uhr neu ab diesem Bild.
                 clock.reset()
@@ -2997,6 +2997,13 @@ class DnaEngineCore(
         private val isTv: Boolean by lazy {
             runCatching { appContext?.packageManager?.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) == true }.getOrDefault(false)
         }
+
+        /**
+         * Ton-Bild-Abgleich (µs): Beamer und Fernseher mit Bildverarbeitung zeigen das Bild verzögert, die Soundbar spielt
+         * den Ton sofort. Positiv = Bild entsprechend früher ausgeben (wirkt wie „Ton später“), negativ = Bild später.
+         * Gilt sofort, auch während der Wiedergabe; im Tunneling gleicht das Gerät selbst ab.
+         */
+        @Volatile var avSyncUs: Long = 0
 
         /** App-Kontext (setzt die App): für die HDMI-Fähigkeiten vor Android 10. */
         @Volatile var appContext: android.content.Context? = null

@@ -402,6 +402,8 @@ class PlayerActivity : ComponentActivity() {
             enhance.mode = settings.audioMode
             enhance.leveling = settings.loudnessLevel
             loudnessLevel = settings.loudnessLevel
+            avSyncMs = settings.avSyncMs
+            de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = settings.avSyncMs * 1000L
             textDisabled = vod != null && !settings.subtitlesAutoOn
             installPlayer(settings.asyncDecoding || phoneAsyncDefault(), settings.audioOutput == AudioOutput.PCM)
             startWatchdog()
@@ -5200,6 +5202,18 @@ class PlayerActivity : ComponentActivity() {
         enhance.leveling = on
         loudnessLevel = on
         container.scope.launch { container.settings.update { it.copy(loudnessLevel = on) } }
+    }
+
+    /** Ton-Bild-Abgleich in ms (positiv: Ton später). Wirkt sofort und gilt für dieses Gerät. */
+    var avSyncMs by mutableStateOf(0); private set
+
+    fun shiftAvSync(deltaMs: Int) = setAvSync(avSyncMs + deltaMs)
+
+    fun setAvSync(ms: Int) {
+        val value = ms.coerceIn(de.ayutv.data.AV_SYNC_MIN_MS, de.ayutv.data.AV_SYNC_MAX_MS)
+        avSyncMs = value
+        de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = value * 1000L
+        container.scope.launch { container.settings.update { it.copy(avSyncMs = value) } }
     }
 
     fun chooseAudioMode(mode: AudioMode) {
