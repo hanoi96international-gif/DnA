@@ -142,6 +142,12 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
     }
     var keyReport by remember { mutableStateOf<String?>(null) }
     var avTest by remember { mutableStateOf(false) }
+    var hdrTest by remember { mutableStateOf(false) }
+    val hdrPhone = remember {
+        val engine = de.ayutv.player.dna.engine.DnaEngineCore
+        if (engine.appContext == null) engine.appContext = context.applicationContext
+        engine.displayHdr10() && de.ayutv.player.dna.engine.GlYuvRenderer.hdrAvailable
+    }
     var page by rememberSaveable { mutableStateOf(SettingsPage.PLAYLISTS) }
     // „Einfach“: nur die wichtigen Einstellungen; „Weitere Einstellungen“ blendet den Rest ein.
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
@@ -168,6 +174,16 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                 update { it.copy(avSyncMs = value) }
             },
             onClose = { avTest = false },
+        )
+    }
+    if (hdrTest) {
+        HdrTestDialog(
+            current = settings.hdrVariant,
+            onChoose = { name ->
+                de.ayutv.player.dna.engine.DnaEngineCore.hdrVariant = de.ayutv.player.dna.engine.HdrVariant.entries.firstOrNull { it.name == name }
+                update { it.copy(hdrVariant = name) }
+            },
+            onClose = { hdrTest = false },
         )
     }
 
@@ -487,6 +503,15 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                                 it.copy(avSyncMs = steps[(steps.indexOf(it.avSyncMs) + 1) % steps.size])
                             }
                         }
+                    }
+                    // Handy mit HDR-Display: wie der eigene Software-Decoder (4K) HDR10 ausgibt – per Testbild gewählt.
+                    if (touch && hdrPhone) item {
+                        SettingRow(
+                            "HDR im eigenen Decoder (Testbild)",
+                            de.ayutv.player.dna.engine.HdrVariant.entries.firstOrNull { it.name == settings.hdrVariant }?.label ?: "Aus",
+                            "Läuft 4K HDR im eigenen Software-Decoder (wenn der des Handys scheitert), wird es bisher nach SDR " +
+                                "umgerechnet. Im Testbild zeigt sich, welche HDR-Ausgabe dieses Handy richtig darstellt – die wählen.",
+                        ) { hdrTest = true }
                     }
                     item {
                         SettingRow(

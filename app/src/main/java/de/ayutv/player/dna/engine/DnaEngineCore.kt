@@ -309,7 +309,7 @@ class DnaEngineCore(
     fun setPaused(paused: Boolean) {
         this.paused = paused
         applyClockPause()
-        currentAudioTrack?.let { runCatching { if (paused || buffering) it.pause() else it.play() } }
+        currentAudioTrack?.let { runCatching { if (paused || buffering || catchUpHold) it.pause() else it.play() } }
         synchronized(lock) { lock.notifyAll() }
     }
 
@@ -318,11 +318,50 @@ class DnaEngineCore(
         buffering = value
         bufferingSinceMs = if (value) SystemClock.elapsedRealtime() else 0L
         applyClockPause()
-        currentAudioTrack?.let { runCatching { if (paused || value) it.pause() else it.play() } }
+        // Puffern beginnt: ein laufender Halt zum Aufholen endet (das Puffern hält Uhr und Ton ohnehin an).
+        if (value) catchUpHold = false
+        currentAudioTrack?.let { runCatching { if (paused || value || catchUpHold) it.pause() else it.play() } }
         listener.onBuffering(value)
     }
 
-    private fun applyClockPause() = clock.setPaused(paused || buffering)
+    private fun applyClockPause() = clock.setPaused(paused || buffering || catchUpHold)
+
+    /**
+     * Bild hängt hinter dem Ton (Decoder kam kurz nicht mit, etwa beim Start oder wenn das Gerät nebenbei beschäftigt
+     * war): Uhr und Ton kurz anhalten, bis das Bild aufgeholt hat – das Bild läuft dabei normal weiter. Vorher sprang
+     * die Engine zum nächsten Schlüsselbild: Bei Sendern mit Schlüsselbildern nur alle paar Sekunden stand das Bild so
+     * lange, und weil der Decoder gerade eben in Echtzeit dekodiert, lag es danach sofort wieder hinten (Rundgang:
+     * 267 von 316 Bildern verworfen, 14 gezeigt). Kostet einmal eine kurze Tonpause, der Vorrat reicht dafür.
+     */
+    @Volatile private var catchUpHold = false
+    private var catchUpHoldSinceMs = 0L
+    private var catchUpHolds = ArrayDeque<Long>()
+
+    /** Auf dem Video-Thread: Halt beginnen (true) oder nicht möglich (zu oft, zu wenig Vorrat). */
+    private fun startCatchUpHold(behindUs: Long): Boolean {
+        if (catchUpHold || paused || buffering || !audioStarted || behindUs > CATCH_UP_HOLD_MAX_US) return false
+        val now = SystemClock.elapsedRealtime()
+        while (catchUpHolds.isNotEmpty() && now - catchUpHolds.first() > 60_000) catchUpHolds.removeFirst()
+        if (catchUpHolds.size >= CATCH_UP_HOLDS_PER_MINUTE) return false
+        val ahead = synchronized(lock) { videoQueue.lastOrNull()?.timeUs?.let { it - clock.nowUs() } ?: 0L }
+        if (ahead < behindUs + 1_000_000) return false
+        catchUpHolds.addLast(now)
+        catchUpHold = true
+        catchUpHoldSinceMs = now
+        applyClockPause()
+        currentAudioTrack?.let { runCatching { it.pause() } }
+        DnaLog.w(TAG, "Bild ${behindUs / 1000} ms hinter dem Ton – Ton kurz angehalten, bis das Bild aufgeholt hat")
+        return true
+    }
+
+    /** Halt beenden: Bild hat aufgeholt oder es dauert zu lange. */
+    private fun endCatchUpHold(reason: String) {
+        if (!catchUpHold) return
+        catchUpHold = false
+        applyClockPause()
+        currentAudioTrack?.let { runCatching { if (!paused && !buffering) it.play() } }
+        DnaLog.i(TAG, "Bild hat aufgeholt nach ${SystemClock.elapsedRealtime() - catchUpHoldSinceMs} ms ($reason)")
+    }
 
     /** Seit wann ununterbrochen gepuffert wird (0 = nicht). */
     @Volatile private var bufferingSinceMs = 0L
@@ -1111,10 +1150,13 @@ class DnaEngineCore(
         private val lateAtDisplay = java.util.concurrent.atomic.AtomicInteger()
         /** Bilder als 10-Bit-Halbfließkomma für die HDR-Anzeige? null = noch nicht entschieden (erstes Bild). */
         @Volatile private var halfOut: Boolean? = null
-        /** Display kann HDR10, und die Grafik kann eine BT.2020/PQ-Fläche anlegen. */
-        // Echte HDR-Ausgabe (BT.2020/PQ-Fläche) vorerst aus: Auf dem Xiaomi 11T war das Bild damit stark rotstichig und
-        // zu dunkel (Fehlerbericht 14.11.). Bis das auf Geräten geprüft ist, wie vorher HDR → SDR umgerechnet.
-        private val hdrCapable: Boolean = HDR_SOFTWARE_OUTPUT && displayHdr10() && GlYuvRenderer.hdrAvailable
+        /**
+         * Echte HDR-Ausgabe nur mit der im HDR-Testbild gewählten Variante (Einstellungen → Wiedergabe): Auf dem Xiaomi
+         * 11T war die 10-Bit-PQ-Fläche stark rotstichig und zu dunkel (Fehlerbericht 14.11.). Ohne Wahl wie bisher
+         * HDR → SDR umgerechnet.
+         */
+        private val hdrVariantNow: HdrVariant? = hdrVariant?.takeIf { displayHdr10() && it in GlYuvRenderer.availableVariants }
+        private val hdrCapable: Boolean = hdrVariantNow != null
 
         // Sparstufe (nur auf dem Dekodier-Thread): 4K ab Stufe 1 (Entblockung nur bei Bildern ohne Bezug aus) –
         // so macht es VLC auf schnellen Handys immer, ohne sichtbaren Unterschied.
@@ -1292,7 +1334,7 @@ class DnaEngineCore(
                 var attempt = 0
                 while (renderer == null && alive()) {
                     try {
-                        renderer = GlYuvRenderer(surface, hdr)
+                        renderer = GlYuvRenderer(surface, hdr, hdrVariantNow ?: HdrVariant.PQ10)
                     } catch (e: Exception) {
                         // HDR-Fläche geht nicht (Grafik/Display): sofort SDR wie bisher (HDR → SDR umgerechnet).
                         if (hdr && e.message?.contains("12291") != true) {
@@ -1805,7 +1847,26 @@ class DnaEngineCore(
             }
             if (firstFrameShown) noteLateness(earlyUs)
             val nowNs = System.nanoTime()
+            // Anhaltend zu spät (über LATE_US, länger als eine Sekunde) oder weit zurück: Ton kurz anhalten statt Bilder
+            // zu verwerfen (siehe startCatchUpHold). Gilt nicht im Tunneling (dort gleicht das Gerät selbst ab).
+            if (firstFrameShown && !tunneled) {
+                if (earlyUs < -LATE_US) {
+                    if (lateSinceNs == 0L) lateSinceNs = nowNs
+                    if (!catchUpHold && (earlyUs < -CATCH_UP_US || nowNs - lateSinceNs > LATE_SUSTAINED_NS)) startCatchUpHold(-earlyUs)
+                } else lateSinceNs = 0L
+                if (catchUpHold && (earlyUs > -CAUGHT_UP_US ||
+                        SystemClock.elapsedRealtime() - catchUpHoldSinceMs > CATCH_UP_HOLD_MAX_US / 1000 + 1_000)
+                ) endCatchUpHold(if (earlyUs > -CAUGHT_UP_US) "eingeholt" else "Zeit abgelaufen")
+            }
             when {
+                // Während des Halts: jedes Bild sofort zeigen – die Uhr steht, das Bild läuft im Takt des Decoders weiter.
+                catchUpHold && firstFrameShown -> {
+                    deinterlacer?.expect(ptsUs, nowNs)
+                    codec.releaseOutputBuffer(index, true)
+                    noteFrameRate(ptsUs)
+                    lastRenderNs = nowNs
+                    renderedFrames++
+                }
                 // Weit zurück (Decoder schafft das Tempo nicht): zum nächsten Schlüsselbild springen, falls eins
                 // im Vorrat liegt – sonst wird der Rückstand nie kleiner.
                 firstFrameShown && earlyUs < -CATCH_UP_US && keyframeQueued() -> {
@@ -1855,6 +1916,8 @@ class DnaEngineCore(
         // Warum Bilder verworfen wurden (für das Protokoll): zu spät einzeln bzw. Sprung zum nächsten Schlüsselbild.
         private var droppedLate = 0
         private var skippedToKey = 0
+        /** Seit wann jedes Bild über [LATE_US] zu spät kommt (0 = gerade nicht). */
+        private var lateSinceNs = 0L
         private var maxBehindUs = 0L
 
         private fun noteLateness(earlyUs: Long) {
@@ -2024,7 +2087,7 @@ class DnaEngineCore(
          * gestartet): Der Start zählt, sobald der Ton tatsächlich schreibt.
          */
         fun ensurePlaying(t: AudioTrack) {
-            if (paused || (buffering && started)) return
+            if (paused || (buffering && started) || (catchUpHold && started)) return
             if (t.playState != AudioTrack.PLAYSTATE_PLAYING) runCatching { t.play() }
             if (playingSinceMs == 0L) playingSinceMs = SystemClock.elapsedRealtime()
             if (!started) {
@@ -2045,7 +2108,7 @@ class DnaEngineCore(
             // leeren Vorrat das erste Stück an, als es noch nicht reichte, wartete der Ton hier ewig – mit 7 s Vorrat
             // (Kurzbericht Fire TV 13.11., 21:26: „Hängt seit 6939 ms im Puffern … Bild 26440–33140 ms“), bis der Player
             // den Sender neu startete.
-            while ((paused || (buffering && started)) && alive(gen)) {
+            while ((paused || (buffering && started) || (catchUpHold && started)) && alive(gen)) {
                 if (!paused && buffering && started) {
                     // Der Ton selbst muss genug haben (nicht nur das Bild): sonst ging es weiter, der Ton war gleich wieder
                     // leer, und das Puffern begann von vorn.
@@ -2077,7 +2140,7 @@ class DnaEngineCore(
                 // blieb bei 0 stehen.
                 if (!started) ensurePlaying(t)
                 val now = SystemClock.elapsedRealtime()
-                if (t.playState == AudioTrack.PLAYSTATE_PLAYING && !paused && !buffering) {
+                if (t.playState == AudioTrack.PLAYSTATE_PLAYING && !paused && !buffering && !catchUpHold) {
                     if (stalledSinceMs == 0L) stalledSinceMs = now
                     else if (now - stalledSinceMs > stallLimitMs(t)) throw AudioPathFailed("Tonausgabe nimmt nichts an")
                 } else stalledSinceMs = 0L
@@ -2086,7 +2149,7 @@ class DnaEngineCore(
             // Spielt die Tonausgabe überhaupt? (Durchreichen an ein Gerät, das das Format doch nicht kann: Daten gehen
             // hinein, aber die Wiedergabe steht.)
             val since = playingSinceMs
-            if (since > 0 && !paused && !buffering && SystemClock.elapsedRealtime() - since > stallLimitMs(t) &&
+            if (since > 0 && !paused && !buffering && !catchUpHold && SystemClock.elapsedRealtime() - since > stallLimitMs(t) &&
                 t.playState == AudioTrack.PLAYSTATE_PLAYING && (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) == 0L
             ) throw AudioPathFailed("Tonausgabe spielt nicht")
         }
@@ -2800,7 +2863,7 @@ class DnaEngineCore(
         fun softVideoSupported(mime: String): Boolean = softVideoAllowed && NativeVideo.supports(mime)
 
         /** Kann das eingebaute Display HDR10 zeigen (Handy mit HDR-Bildschirm)? */
-        private fun displayHdr10(): Boolean = runCatching {
+        fun displayHdr10(): Boolean = runCatching {
             val dm = appContext?.getSystemService(android.content.Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
             val types = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.hdrCapabilities?.supportedHdrTypes
             types?.contains(android.view.Display.HdrCapabilities.HDR_TYPE_HDR10) == true
@@ -2886,6 +2949,14 @@ class DnaEngineCore(
         private const val MIN_FRAME_GAP_NS = 100_000_000L
         /** So weit hinter der Uhr: zum nächsten Schlüsselbild springen. */
         private const val CATCH_UP_US = 600_000L
+        /** So lange (ns) ununterbrochen zu spät, dann hält der Ton zum Aufholen kurz an. */
+        private const val LATE_SUSTAINED_NS = 1_000_000_000L
+        /** Weiter zurück als das: kein Halt (ein so großer Rückstand ist ein Sprung), sondern wie bisher zum Schlüsselbild. */
+        private const val CATCH_UP_HOLD_MAX_US = 2_500_000L
+        /** Halt endet, sobald ein Bild höchstens so spät kommt. */
+        private const val CAUGHT_UP_US = 40_000L
+        /** Höchstens so viele Halte pro Minute (kommt das Bild dauerhaft nicht mit, hilft nur das Überspringen). */
+        private const val CATCH_UP_HOLDS_PER_MINUTE = 3
         /** Früher als das wird ein Bild zurückgehalten (sonst mit Zeitpunkt an die Bildfläche gegeben). */
         private const val HOLD_US = 80_000L
         /** Größer als das ist ein Zeitsprung (kein normales Vor- oder Nacheilen). */
@@ -2943,8 +3014,6 @@ class DnaEngineCore(
         private const val PREVIOUS_AUDIO_WAIT_MS = 1_500L
         private const val PHASE_OPENING = "öffnet die Tonausgabe"
         private const val STUCK_LOG_MS = 6_000L
-        /** Software-Decoder: HDR10 als echtes HDR an das Display (statt nach SDR umgerechnet). Siehe hdrCapable. */
-        private const val HDR_SOFTWARE_OUTPUT = false
         /** Wiederholung nach dem Neuverbinden: Bilder dürfen in Dekodier-Reihenfolge so weit zurückliegen (B-Bilder). */
         private const val REPLAY_REORDER_US = 1_000_000L
         private const val REPLAY_AUDIO_US = 100_000L
@@ -3027,6 +3096,9 @@ class DnaEngineCore(
          * Gilt sofort, auch während der Wiedergabe; im Tunneling gleicht das Gerät selbst ab.
          */
         @Volatile var avSyncUs: Long = 0
+
+        /** Im HDR-Testbild gewählte Ausgabe für HDR10 im eigenen Software-Decoder (null = nach SDR umrechnen). */
+        @Volatile var hdrVariant: HdrVariant? = null
 
         /** App-Kontext (setzt die App): für die HDMI-Fähigkeiten vor Android 10. */
         @Volatile var appContext: android.content.Context? = null
