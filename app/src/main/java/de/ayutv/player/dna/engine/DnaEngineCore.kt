@@ -1862,7 +1862,8 @@ class DnaEngineCore(
                     if (lateSinceNs == 0L) lateSinceNs = nowNs
                     if (!catchUpHold && (earlyUs < -CATCH_UP_US || nowNs - lateSinceNs > LATE_SUSTAINED_NS)) {
                         // Halt nicht möglich (Decoder zu langsam): H.264 – Bilder ohne Bezug gar nicht erst dekodieren.
-                        if (!startCatchUpHold(-earlyUs, decodeSpeed) && h264 && !hurryInput) {
+                        // Ohne Messung (gerade gestartet) kein Halt: Ob der Decoder Echtzeit schafft, ist noch offen.
+                        if (!startCatchUpHold(-earlyUs, if (speedMeasured) decodeSpeed else 0.0) && h264 && !hurryInput) {
                             hurryInput = true
                             hurrySinceNs = nowNs
                             DnaLog.w(TAG, "$name schafft nur ${(decodeSpeed * 100).toInt()} % Echtzeit – lasse Bilder ohne Bezug aus")
@@ -1944,6 +1945,7 @@ class DnaEngineCore(
         private var droppedNonRef = 0
         /** Wie schnell der Decoder Bilder liefert, gemessen an ihren Zeitstempeln (1.0 = Echtzeit, Fenster 2 s). */
         private var decodeSpeed = 1.0
+        private var speedMeasured = false
         private var speedStartMs = 0L
         private var speedStartPts = 0L
 
@@ -1954,6 +1956,7 @@ class DnaEngineCore(
                 speedStartPts = ptsUs
             } else if (now - speedStartMs >= 2_000) {
                 decodeSpeed = (ptsUs - speedStartPts) / 1000.0 / (now - speedStartMs)
+                speedMeasured = true
                 speedStartMs = now
                 speedStartPts = ptsUs
             }
