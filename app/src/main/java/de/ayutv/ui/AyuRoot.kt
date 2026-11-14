@@ -138,6 +138,7 @@ fun AyuRoot() {
 
     LaunchedEffect(section) { UiPerformance.section = section.label }
     LaunchedEffect(appSettings?.uiTheme, appSettings?.accent) { appSettings?.let { AyuColors.use(it.uiTheme, it.accent) } }
+    LaunchedEffect(appSettings?.calmBackground) { appSettings?.let { AyuColors.calm = it.calmBackground } }
 
     de.ayutv.ui.theme.AppBackground {
         val list = playlists

@@ -348,6 +348,7 @@ fun PlayerScreen(activity: PlayerActivity) {
                     SubtitlePosition.LOW -> 20.dp
                     SubtitlePosition.NORMAL -> 40.dp
                     SubtitlePosition.HIGH -> 80.dp
+                    SubtitlePosition.CINEMA -> 98.dp
                 }
                 Text(
                     cue,
@@ -1058,6 +1059,12 @@ private fun MenuOverview(activity: PlayerActivity) {
                     activity.toggleCast()
                 }
             }
+            // Puffer, Datenrate und Decoder anzeigen – auf dem Fernseher über die Info-Taste, auf dem Handy nur hier.
+            item {
+                ActionRow("📊", if (activity.showTech) "Technik-Zeile ausblenden (Puffer, Datenrate)" else "Technik-Zeile anzeigen (Puffer, Datenrate)") {
+                    activity.toggleTech()
+                }
+            }
             if (activity.isLive) {
                 item { MenuHeader("Sender") }
                 item {
@@ -1112,6 +1119,11 @@ private fun MenuSubPage(activity: PlayerActivity, page: MenuPage) {
                     item { MenuHeader("Lautstärke") }
                     item { OptionRow("Lautstärke angleichen (alle Sender)", activity.loudnessLevel, check = true) { activity.toggleLoudness() } }
                     item { MenuHint("Wirkt, wenn der Ton im Gerät dekodiert wird – nicht bei Dolby/DTS, das an Soundbar oder Receiver geht (Einstellungen → Tonausgabe: „Immer im Gerät dekodieren“).") }
+                    item { MenuHeader("Ton-Bild-Abgleich: ${de.ayutv.data.avSyncLabel(activity.avSyncMs)}") }
+                    item { ActionRow("⏩", "Ton später (+${de.ayutv.data.AV_SYNC_STEP_MS} ms) – Ton kommt vor den Lippen") { activity.shiftAvSync(de.ayutv.data.AV_SYNC_STEP_MS) } }
+                    item { ActionRow("⏪", "Ton früher (−${de.ayutv.data.AV_SYNC_STEP_MS} ms) – Ton kommt nach den Lippen") { activity.shiftAvSync(-de.ayutv.data.AV_SYNC_STEP_MS) } }
+                    if (activity.avSyncMs != 0) item { ActionRow("↺", "Zurücksetzen") { activity.setAvSync(0) } }
+                    item { MenuHint("Beamer und Fernseher mit Bildverbesserung zeigen das Bild oft 40–150 ms verzögert, die Soundbar spielt sofort. Gilt für dieses Gerät und alle Sender; beim Spielmodus des Beamers meist weniger nötig.") }
                 }
                 MenuPage.PICTURE -> AspectMode.entries.forEachIndexed { i, mode ->
                     item { OptionRow(mode.label, activity.aspect == mode, if (i == 0) Modifier.focusRequester(first) else Modifier) { activity.chooseAspect(mode) } }

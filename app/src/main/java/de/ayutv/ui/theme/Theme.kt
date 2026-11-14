@@ -259,6 +259,12 @@ object AyuColors {
     var accent by mutableStateOf(AccentChoice.DESIGN)
         private set
 
+    /**
+     * Ruhiger Hintergrund: nur die dunkle Grundfarbe des Designs, ohne Bild. Spart dem Grafikchip eine ganze
+     * Bildschirmfläche pro Bild (schwache Sticks) und ist am Beamer dunkler (bessere Schwarzwerte, kein Leuchten).
+     */
+    var calm by mutableStateOf(false)
+
     fun use(next: UiTheme, nextAccent: AccentChoice = accent) {
         // State nur auf dem UI-Thread und innerhalb eines Snapshots schreiben,
         // sonst: "Reading a state that was created after the snapshot was taken"
@@ -373,7 +379,7 @@ fun AppBackground(modifier: Modifier = Modifier, content: @Composable () -> Unit
     Box(
         modifier.fillMaxSize().background(AyuColors.Background)
             .then(
-                when (theme) {
+                if (AyuColors.calm) Modifier else when (theme) {
                     UiTheme.PRESTIGE -> Modifier.drawWithCache {
                         val image = rasterize { CarbonCockpit(it).draw(this) }
                         onDrawBehind { drawImage(image, dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt())) }
