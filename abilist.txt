@@ -1,0 +1,2 @@
+x86_64,x86,arm64-v8a,armeabi-v7a,armeabi
+libndk_translation.so

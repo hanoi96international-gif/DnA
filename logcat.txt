@@ -1,0 +1,141 @@
+--------- beginning of main
+--------- beginning of system
+11-14 14:36:18.522 I/ActivityManager(  494): Start proc 3040:com.google.android.ims/u0a114 for service {com.google.android.ims/com.google.android.ims.services.MessagingService}
+11-14 14:36:19.267 I/ActivityManager(  494): Start proc 3097:com.google.android.gms.ui/u0a122 for service {com.google.android.gms/com.google.android.gms.chimera.UiIntentOperationService}
+11-14 14:36:19.675 I/ActivityManager(  494): Start proc 3149:com.google.android.documentsui/u0a92 for broadcast {com.google.android.documentsui/com.android.documentsui.PreBootReceiver}
+11-14 14:36:20.182 W/ActivityManager(  494): Slow operation: 74ms so far, now at getContentProviderImpl: before checkContentProviderPermission
+11-14 14:36:20.182 W/ActivityManager(  494): Slow operation: 74ms so far, now at getContentProviderImpl: after checkContentProviderPermission
+11-14 14:36:20.182 W/ActivityManager(  494): Slow operation: 74ms so far, now at getContentProviderImpl: incProviderCountLocked
+11-14 14:36:20.182 W/ActivityManager(  494): Slow operation: 74ms so far, now at getContentProviderImpl: before updateOomAdj
+11-14 14:36:20.182 W/ActivityManager(  494): Slow operation: 74ms so far, now at getContentProviderImpl: after updateOomAdj
+11-14 14:36:20.182 W/ActivityManager(  494): Slow operation: 74ms so far, now at getContentProviderImpl: done!
+11-14 14:36:20.186 I/ActivityManager(  494): Killing 1429:com.android.carrierconfig/u0a156 (adj 985): empty #17
+11-14 14:36:20.221 I/ActivityManager(  494): Start proc 3207:com.google.android.apps.messaging/u0a147 for service {com.google.android.apps.messaging/com.google.android.apps.messaging.rcsmigration.RcsMigrationService}
+11-14 14:36:20.249 I/ActivityManager(  494): Start proc 3216:com.google.android.packageinstaller/u0a88 for broadcast {com.google.android.packageinstaller/com.android.packageinstaller.PackageInstalledReceiver}
+11-14 14:36:20.336 I/ActivityManager(  494): Killing 1582:com.android.cellbroadcastreceiver/u0a80 (adj 975): empty #17
+--------- beginning of kernel
+11-14 14:36:20.514 I/ActivityManager(  494): Killing 1788:com.android.keychain/1000 (adj 985): empty #17
+11-14 14:36:20.543 I/ActivityManager(  494): Start proc 3264:com.google.android.apps.docs/u0a139 for content provider {com.google.android.apps.docs/com.google.android.apps.docs.storagebackend.StorageBackendContentProvider}
+11-14 14:36:20.624 I/ActivityManager(  494): Killing 1978:com.android.printspooler/u0a110 (adj 985): empty #17
+11-14 14:36:20.755 I/ActivityManager(  494): Posting BOOT_COMPLETED user #0
+11-14 14:36:20.759 W/ActivityManager(  494): UserLifecycleEvent 6 received without an active userJourneySession.
+11-14 14:36:20.938 I/ActivityManager(  494): Killing 2389:com.android.localtransport/1000 (adj 975): empty #17
+11-14 14:36:22.390 W/ActivityManager(  494): Unable to start service Intent { act=com.google.android.ims.SIM_LOADED cmp=com.google.android.ims/eew (has extras) } U=0: not found
+11-14 14:36:22.393 W/ActivityManager(  494): Receiver with filter android.content.IntentFilter@9de7299 already registered for pid 3040, callerPackage is com.google.android.ims
+11-14 14:36:22.511 I/ActivityManager(  494): Force stopping de.ayutv appid=10167 user=0: start instr
+11-14 14:36:22.539 I/ActivityManager(  494): Start proc 3495:de.ayutv/u0a167 for added application de.ayutv
+11-14 14:36:22.875 I/ActivityManager(  494): Start proc 3527:com.google.android.calendar/u0a144 for broadcast {com.google.android.calendar/com.google.android.calendar.SyncUpgradeReceiver}
+11-14 14:36:24.030 I/ActivityManager(  494): Start proc 3643:com.android.camera2/u0a133 for broadcast {com.android.camera2/com.android.camera.SetActivitiesCameraReceiver}
+11-14 14:36:24.190 I/ActivityManager(  494): Killing 1835:com.google.android.apps.youtube.music/u0a140 (adj 985): empty #17
+11-14 14:36:24.197 I/ActivityManager(  494): Start proc 3675:com.android.contacts/u0a119 for broadcast {com.android.contacts/com.android.contacts.interactions.OnBootOrUpgradeReceiver}
+11-14 14:36:24.292 I/ActivityManager(  494): Killing 1363:com.google.android.deskclock/u0a127 (adj 985): empty #17
+11-14 14:36:24.313 I/ActivityManager(  494): Start proc 3699:com.android.dynsystem/1000 for broadcast {com.android.dynsystem/com.android.dynsystem.BootCompletedReceiver}
+11-14 14:36:24.390 I/ActivityManager(  494): Killing 1876:com.google.android.youtube/u0a146 (adj 985): empty #17
+11-14 14:36:24.410 I/ActivityManager(  494): Start proc 3719:com.android.nfc/1027 for broadcast {com.android.nfc/com.android.nfc.NfcBootCompletedReceiver}
+11-14 14:36:24.563 I/ActivityManager(  494): Killing 3719:com.android.nfc/1027 (adj 0): change com.android.nfc
+11-14 14:36:24.812 I/ActivityManager(  494): Start proc 3742:com.android.shell/2000 for broadcast {com.android.shell/com.android.shell.HeapDumpReceiver}
+11-14 14:36:25.070 I/ActivityManager(  494): Killing 1658:com.google.android.apps.messaging:rcs/u0a147 (adj 985): empty #17
+11-14 14:36:25.143 I/ActivityManager(  494): Start proc 3766:com.android.traceur/u0a105 for broadcast {com.android.traceur/com.android.traceur.Receiver}
+11-14 14:36:27.242 I/ActivityManager(  494): Killing 3149:com.google.android.documentsui/u0a92 (adj 985): empty #17
+11-14 14:36:27.555 I/ActivityManager(  494): Killing 3097:com.google.android.gms.ui/u0a122 (adj 925): empty #17
+11-14 14:36:27.910 I/AyuArm  ( 3495): abis=x86_64, x86, arm64-v8a, armeabi-v7a, armeabi libs=/data/app/~~ihpAkNkbTyON3QajKWBZSg==/de.ayutv-pXU2bDwS5g7cDYnaynvhJQ==/lib/arm
+11-14 14:36:27.934 I/ActivityManager(  494): Start proc 3903:de.ayutv:mt/u0a167 for service {de.ayutv/de.ayutv.data.translate.TranslationService}
+11-14 14:36:29.300 I/ActivityManager(  494): Start proc 3932:com.google.android.apps.maps/u0a136 for broadcast {com.google.android.apps.maps/com.google.android.apps.gmm.navigation.service.detection.StartDetectionReceiver}
+11-14 14:36:30.166 I/ActivityManager(  494): Killing 2723:com.google.android.webview:webview_service/u0a145 (adj 975): empty #17
+11-14 14:36:30.929 I/ActivityManager(  494): Start proc 4017:com.google.android.apps.messaging:rcs/u0a147 for broadcast {com.google.android.apps.messaging/com.google.android.ims.receiver.AutoStartReceiver}
+11-14 14:36:30.951 I/ActivityManager(  494): Killing 2802:com.android.externalstorage/u0a86 (adj 975): empty #17
+11-14 14:36:31.272 I/ActivityManager(  494): Start proc 4055:com.google.android.apps.wallpaper/u0a152 for broadcast {com.google.android.apps.wallpaper/com.android.wallpaper.module.RotationWallpaperUpdateReceiver}
+11-14 14:36:31.371 I/ActivityManager(  494): Killing 3216:com.google.android.packageinstaller/u0a88 (adj 985): empty #17
+11-14 14:36:31.547 I/ActivityManager(  494): Killing 2438:com.google.android.gm/u0a134 (adj 935): empty #17
+11-14 14:36:31.794 I/ActivityManager(  494): Start proc 4098:com.google.android.apps.youtube.music/u0a140 for broadcast {com.google.android.apps.youtube.music/com.google.android.libraries.youtube.mdx.background.MdxBackgroundScanBootReceiver}
+11-14 14:36:32.247 I/ActivityManager(  494): Killing 1548:com.google.android.cellbroadcastreceiver/u0a162 (adj 975): empty #17
+11-14 14:36:32.266 I/ActivityManager(  494): Start proc 4190:com.google.android.configupdater/u0a118 for broadcast {com.google.android.configupdater/com.google.android.configupdater.MainReceiver}
+11-14 14:36:32.366 I/ActivityManager(  494): Start proc 4242:com.google.android.deskclock/u0a127 for broadcast {com.google.android.deskclock/com.android.deskclock.AlarmInitReceiver}
+11-14 14:36:32.497 I/ActivityManager(  494): Killing 3643:com.android.camera2/u0a133 (adj 985): empty #17
+11-14 14:36:32.512 I/ActivityManager(  494): Start proc 4273:com.google.android.gm/u0a134 for broadcast {com.google.android.gm/com.google.android.gm.GoogleMailDeviceStartupReceiver}
+11-14 14:36:32.892 W/ActivityManager(  494): Unable to start service Intent { cmp=com.google.android.gm/com.android.email.service.AttachmentService } U=0: not found
+11-14 14:36:32.970 I/ActivityManager(  494): Killing 4273:com.google.android.gm/u0a134 (adj 0): change com.google.android.gm
+11-14 14:36:32.971 W/ActivityManager(  494): Scheduling restart of crashed service com.google.android.gm/.job.GmailInitialSetupJob$GmailInitialSetupJobService in 1000ms for connection
+11-14 14:36:32.971 W/ActivityManager(  494): Scheduling restart of crashed service com.google.android.gm/com.android.email.job.UpgradeJob$UpgradeJobService in 11000ms for connection
+11-14 14:36:32.989 I/ActivityManager(  494): Start proc 4347:com.google.android.gm/u0a134 for broadcast {com.google.android.gm/com.google.android.libraries.notifications.entrypoints.restart.RestartReceiver}
+11-14 14:36:33.078 I/ActivityManager(  494): Killing 2269:com.google.android.syncadapters.contacts/u0a143 (adj 975): empty #17
+11-14 14:36:33.177 I/DnAOcr  ( 3903): Texterkennung geladen
+11-14 14:36:33.327 W/ActivityManager(  494): Unable to start service Intent { cmp=com.google.android.gm/com.android.email.service.AttachmentService } U=0: not found
+11-14 14:36:33.409 I/ActivityManager(  494): Start proc 4415:com.android.chrome/u0a132 for service {com.android.chrome/org.chromium.chrome.browser.customtabs.CustomTabsConnectionService}
+11-14 14:36:33.423 W/ActivityManager(  494): Unable to start service Intent { act=com.google.android.gms.auth.key.retrieval.service.START pkg=com.google.android.gms } U=0: not found
+11-14 14:36:33.425 W/ActivityManager(  494): Unbind failed: could not find connection for android.os.BinderProxy@31ec2c6
+11-14 14:36:33.456 I/ActivityManager(  494): Start proc 4437:com.google.android.onetimeinitializer/u0a149 for broadcast {com.google.android.onetimeinitializer/com.google.android.onetimeinitializer.OneTimeInitializerReceiver}
+11-14 14:36:33.530 I/ActivityManager(  494): Killing 3675:com.android.contacts/u0a119 (adj 985): empty #17
+11-14 14:36:33.575 I/ActivityManager(  494): Start proc 4480:com.google.android.packageinstaller/u0a88 for broadcast {com.google.android.packageinstaller/com.android.packageinstaller.TemporaryFileManager}
+11-14 14:36:33.675 I/ActivityManager(  494): Killing 3699:com.android.dynsystem/1000 (adj 975): empty #17
+11-14 14:36:33.777 I/ActivityManager(  494): Killing 2609:com.android.managedprovisioning/u0a91 (adj 985): empty #17
+11-14 14:36:34.286 I/ActivityManager(  494): Start proc 4556:com.google.android.projection.gearhead:shared/u0a116 for broadcast {com.google.android.projection.gearhead/com.google.android.apps.auto.components.app.fzero.FzeroReceiver}
+11-14 14:36:34.646 I/ActivityManager(  494): Killing 1153:com.android.settings/1000 (adj 985): empty #17
+11-14 14:36:34.649 I/ActivityManager(  494): Start proc 4612:com.google.android.projection.gearhead:car/u0a116 for broadcast {com.google.android.projection.gearhead/com.google.android.apps.auto.carservice.frx.FrxReceiver}
+11-14 14:36:34.706 I/ActivityManager(  494): Killing 3742:com.android.shell/2000 (adj 985): empty #17
+11-14 14:36:34.726 W/ActivityManager(  494): setHasOverlayUi called on unknown pid: 1153
+11-14 14:36:34.780 I/ActivityManager(  494): Killing 3766:com.android.traceur/u0a105 (adj 985): empty #17
+11-14 14:36:34.800 I/ActivityManager(  494): Start proc 4645:com.google.android.setupwizard/u0a115 for broadcast {com.google.android.setupwizard/com.google.android.setupwizard.deferred.ComponentStateMitigationReceiver}
+11-14 14:36:34.894 I/ActivityManager(  494): Killing 3264:com.google.android.apps.docs/u0a139 (adj 985): empty #17
+11-14 14:36:34.901 I/ActivityManager(  494): Start proc 4670:com.google.android.syncadapters.contacts/u0a143 for broadcast {com.google.android.syncadapters.contacts/com.google.android.syncadapters.contacts.ContactsSyncAdapterBroadcastReceiver}
+11-14 14:36:35.054 I/ActivityManager(  494): Killing 3932:com.google.android.apps.maps/u0a136 (adj 945): empty #17
+11-14 14:36:35.059 I/ActivityManager(  494): Start proc 4701:com.google.android.videos/u0a142 for broadcast {com.google.android.videos/com.google.android.apps.play.movies.common.service.pinning.TransferService$Receiver}
+11-14 14:36:35.231 W/ActivityManager(  494): Unable to start service Intent { act=com.android.vending.contentfilters.IContentFiltersService.BIND pkg=com.android.vending } U=0: not found
+11-14 14:36:35.367 W/ActivityManager(  494): Foreground service started from background can not have location/camera/microphone access: service com.google.android.videos/com.google.android.apps.play.movies.common.service.pinning.TransferService
+11-14 14:36:35.411 I/ActivityManager(  494): Start proc 4772:com.google.android.youtube/u0a146 for broadcast {com.google.android.youtube/com.google.android.libraries.youtube.mdx.background.MdxBackgroundScanBootReceiver}
+11-14 14:36:35.524 I/ActivityManager(  494): Killing 4017:com.google.android.apps.messaging:rcs/u0a147 (adj 935): empty #17
+11-14 14:36:35.682 I/ActivityManager(  494): Start proc 4869:com.google.android.gms.ui/u0a122 for service {com.google.android.gms/com.google.android.gms.chimera.UiIntentOperationService}
+11-14 14:36:35.857 I/ActivityManager(  494): Finished processing BOOT_COMPLETED for u0
+11-14 14:36:35.858 I/ActivityManager(  494): Killing 2829:com.google.android.gms.unstable/u0a122 (adj 985): empty #17
+11-14 14:36:35.870 W/ActivityManager(  494): Scheduling restart of crashed service com.google.android.gms/.droidguard.DroidGuardService in 1000ms for start-requested
+11-14 14:36:36.099 I/ActivityManager(  494): Start proc 4939:com.google.android.apps.messaging:rcs/u0a147 for broadcast {com.google.android.apps.messaging/com.google.android.ims.receiver.ProvisioningEventReceiver}
+11-14 14:36:36.523 I/ActivityManager(  494): Killing 4055:com.google.android.apps.wallpaper/u0a152 (adj 975): empty #17
+11-14 14:36:36.626 I/ActivityManager(  494): Start proc 4997:com.google.android.gms.unstable/u0a122 for service {com.google.android.gms/com.google.android.gms.droidguard.DroidGuardService}
+11-14 14:36:36.729 I/ActivityManager(  494): Start proc 5017:com.google.android.cellbroadcastreceiver/u0a162 for broadcast {com.google.android.cellbroadcastreceiver/com.android.cellbroadcastreceiver.CellBroadcastReceiver}
+11-14 14:36:36.849 I/ActivityManager(  494): Killing 4098:com.google.android.apps.youtube.music/u0a140 (adj 985): empty #17
+11-14 14:36:37.025 W/ActivityManager(  494): Unable to start service Intent { act=com.google.android.gms.auth.key.retrieval.service.START pkg=com.google.android.gms } U=0: not found
+11-14 14:36:37.027 W/ActivityManager(  494): Unbind failed: could not find connection for android.os.BinderProxy@7e10f60
+11-14 14:36:37.835 I/ActivityManager(  494): Start proc 5108:com.google.android.apps.maps/u0a136 for broadcast {com.google.android.apps.maps/com.google.android.apps.gmm.ugc.ataplace.AtAPlaceService}
+11-14 14:36:38.653 I/ActivityManager(  494): Killing 4190:com.google.android.configupdater/u0a118 (adj 985): empty #17
+11-14 14:36:38.877 I/ActivityManager(  494): Start proc 5168:com.google.android.apps.pixelmigrate/u0a112 for broadcast {com.google.android.apps.pixelmigrate/com.google.android.apps.pixelmigrate.component.PhenotypeUpdateReceiver}
+11-14 14:36:39.029 I/ActivityManager(  494): Start proc 5199:com.google.android.apps.restore/u0a121 for broadcast {com.google.android.apps.restore/com.google.android.apps.pixelmigrate.component.PhenotypeUpdateReceiver}
+11-14 14:36:39.140 I/ActivityManager(  494): Killing 4242:com.google.android.deskclock/u0a127 (adj 985): empty #17
+11-14 14:36:39.245 I/ActivityManager(  494): Start proc 5233:com.google.android.configupdater/u0a118 for broadcast {com.google.android.configupdater/com.google.android.configupdater.PhenotypeBroadcastReceiver}
+11-14 14:36:39.305 I/ActivityManager(  494): Killing 4347:com.google.android.gm/u0a134 (adj 985): empty #17
+11-14 14:36:39.464 I/ActivityManager(  494): Killing 4415:com.android.chrome/u0a132 (adj 975): empty #17
+11-14 14:36:40.213 I/ActivityManager(  494): Start proc 5268:com.google.android.gm/u0a134 for broadcast {com.google.android.gm/com.google.android.gm.MailIntentReceiver}
+11-14 14:36:40.352 I/ActivityManager(  494): Start proc 5311:com.google.android.apps.youtube.music/u0a140 for broadcast {com.google.android.apps.youtube.music/com.google.firebase.iid.FirebaseInstanceIdReceiver}
+11-14 14:36:40.366 I/ActivityManager(  494): Killing 4437:com.google.android.onetimeinitializer/u0a149 (adj 975): empty #17
+11-14 14:36:40.412 W/ActivityManager(  494): Unable to start service Intent { cmp=com.google.android.gm/com.android.email.service.AttachmentService } U=0: not found
+11-14 14:36:40.594 I/ActivityManager(  494): Killing 4480:com.google.android.packageinstaller/u0a88 (adj 975): empty #17
+11-14 14:36:40.928 W/ActivityManager(  494): Unable to start service Intent { act=com.google.android.c2dm.intent.REGISTRATION pkg=com.google.android.apps.maps } U=0: not found
+11-14 14:36:46.259 I/ActivityManager(  494): Killing 4612:com.google.android.projection.gearhead:car/u0a116 (adj 985): empty #17
+11-14 14:36:47.477 I/ActivityManager(  494): Killing 4556:com.google.android.projection.gearhead:shared/u0a116 (adj 965): empty #17
+11-14 14:36:50.015 I/ActivityManager(  494): Killing 4645:com.google.android.setupwizard/u0a115 (adj 975): empty #17
+11-14 14:36:56.155 I/ActivityManager(  494): Killing 1286:com.google.android.apps.wellbeing/u0a113 (adj 985): empty #17
+11-14 14:37:02.270 I/ActivityManager(  494): Killing 4939:com.google.android.apps.messaging:rcs/u0a147 (adj 985): empty #17
+11-14 14:37:02.272 I/ActivityManager(  494): Killing 4869:com.google.android.gms.ui/u0a122 (adj 985): empty #18
+11-14 14:37:02.273 I/ActivityManager(  494): Killing 4670:com.google.android.syncadapters.contacts/u0a143 (adj 995): empty #19
+11-14 14:37:03.914 I/ActivityManager(  494): Start proc 5579:com.google.android.setupwizard/u0a115 for service {com.google.android.setupwizard/com.google.android.setupwizard.logging.ClearcutLogsUploaderService}
+11-14 14:37:03.976 I/ActivityManager(  494): Killing 3527:com.google.android.calendar/u0a144 (adj 985): empty #17
+11-14 14:37:04.034 I/ActivityManager(  494): Killing 5017:com.google.android.cellbroadcastreceiver/u0a162 (adj 975): empty #17
+11-14 14:37:08.916 I/AyuArm  ( 3495): round 0 de: Texterkennung ok: „Where is my brother?“ (17366 ms) | Übersetzung Deutsch ok: „Wo ist mein Bruder?“ (23634 ms, inkl. Laden) | Rechenkern: ONNX Runtime | Speicher Übersetzer: höchstens 442 MB, belegt 129 MB | Prozessor: Teil 0x802 · Features: neon vfp swp half thumb fastmult edsp vfpv3 vfpv4 idiva idivt
+11-14 14:37:08.931 I/ActivityManager(  494): Killing 5168:com.google.android.apps.pixelmigrate/u0a112 (adj 975): empty #17
+11-14 14:37:09.935 I/ActivityManager(  494): Process de.ayutv:mt (pid 3903) has died: cch+5 CEM 
+11-14 14:37:11.428 I/ActivityManager(  494): Start proc 5658:de.ayutv:mt/u0a167 for service {de.ayutv/de.ayutv.data.translate.TranslationService}
+11-14 14:37:31.533 I/ActivityManager(  494): Start proc 5695:com.google.android.apps.wallpaper/u0a152 for broadcast {com.google.android.apps.wallpaper/com.android.wallpaper.module.DailyLoggingAlarmReceiver}
+11-14 14:37:32.630 I/ActivityManager(  494): Killing 5199:com.google.android.apps.restore/u0a121 (adj 985): empty #17
+11-14 14:37:41.645 W/ActivityManager(  494): Unable to start service Intent { act=com.google.android.gms.drive.ApiService.RESET_AFTER_BOOT flg=0x4 cmp=com.google.android.gms/.drive.api.ApiService (has extras) } U=0: not found
+11-14 14:37:42.251 I/AyuArm  ( 3495): round 1 es: Texterkennung ok: „Where is my brother?“ (2886 ms) | Übersetzung Spanisch ok: „¿Dónde está mi hermano?“ (27942 ms, inkl. Laden) | Rechenkern: ONNX Runtime | Speicher Übersetzer: höchstens 437 MB, belegt 87 MB | Prozessor: Teil 0x802 · Features: neon vfp swp half thumb fastmult edsp vfpv3 vfpv4 idiva idivt
+11-14 14:37:43.265 I/ActivityManager(  494): Process de.ayutv:mt (pid 5658) has died: cch+5 CEM 
+11-14 14:37:44.759 I/ActivityManager(  494): Start proc 5771:de.ayutv:mt/u0a167 for service {de.ayutv/de.ayutv.data.translate.TranslationService}
+11-14 14:38:01.034 I/AyuArm  ( 3495): round 2 id: Texterkennung ok: „Where is my brother?“ (1174 ms) | Übersetzung Indonesisch ok: „Dimana adikku?“ (15105 ms, inkl. Laden) | Rechenkern: DnA-Rechenkern (ohne native Bibliothek) | Speicher Übersetzer: höchstens 453 MB, belegt 52 MB | Prozessor: Teil 0x802 · Features: neon vfp swp half thumb fastmult edsp vfpv3 vfpv4 idiva idivt
+11-14 14:38:01.664 I/ActivityManager(  494): Killing 3207:com.google.android.apps.messaging/u0a147 (adj 985): empty #17
+11-14 14:38:02.045 I/ActivityManager(  494): Process de.ayutv:mt (pid 5771) has died: cch+5 CEM 
+11-14 14:38:03.543 I/ActivityManager(  494): Start proc 5815:de.ayutv:mt/u0a167 for service {de.ayutv/de.ayutv.data.translate.TranslationService}
+11-14 14:38:20.684 I/ActivityManager(  494): Killing 4701:com.google.android.videos/u0a142 (adj 985): empty #17
+11-14 14:38:20.684 I/AyuArm  ( 3495): round 3 fr: Texterkennung ok: „Where is my brother?“ (1163 ms) | Übersetzung Französisch ok: „Où est mon frère ?“ (15982 ms, inkl. Laden) | Rechenkern: DnA-Rechenkern (ohne native Bibliothek) | Speicher Übersetzer: höchstens 452 MB, belegt 54 MB | Prozessor: Teil 0x802 · Features: neon vfp swp half thumb fastmult edsp vfpv3 vfpv4 idiva idivt
+11-14 14:38:20.694 I/ActivityManager(  494): Killing 4772:com.google.android.youtube/u0a146 (adj 985): empty #17
+11-14 14:38:21.701 I/ActivityManager(  494): Process de.ayutv:mt (pid 5815) has died: cch+5 CEM 
+11-14 14:38:23.196 I/ActivityManager(  494): Force stopping de.ayutv appid=10167 user=0: finished inst
+11-14 14:38:23.196 I/ActivityManager(  494): Killing 3495:de.ayutv/u0a167 (adj 0): stop de.ayutv due to finished inst

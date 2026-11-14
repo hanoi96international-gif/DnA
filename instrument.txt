@@ -1,0 +1,8 @@
+
+de.ayutv.ArmSelfTest:.
+
+Time: 115.291
+
+OK (1 test)
+
+
