@@ -145,6 +145,13 @@ class PlayerActivity : ComponentActivity() {
     /** Endgültiger Fehler: Bild schwarz statt des letzten Bildes vom vorigen Sender. */
     var fatalError by mutableStateOf(false); private set
     var showTech by mutableStateOf(false); private set
+
+    /** Technik-Zeile (Puffer, Datenrate, Decoder) ein-/ausblenden – auf dem Handy über das Menü (keine Info-Taste). */
+    fun toggleTech() {
+        showTech = !showTech
+        closeOverlay()
+        showOverlay(if (vod != null && !isLive) Overlay.CONTROLS else Overlay.INFO)
+    }
     /** Gepufferte Sekunden (nur aktualisiert, solange die Stream-Info sichtbar ist). */
     var bufferedMs by mutableLongStateOf(0L); private set
     /** Abbrüche der Verbindung zum Anbieter beim laufenden Sender, für die Technik-Anzeige. */
@@ -1772,7 +1779,7 @@ class PlayerActivity : ComponentActivity() {
             }
             if (embeddedSource != null) {
                 startLiveTranslation(language, embeddedSource, preroll = true)
-                if (chosen == PlayerMemory.SOURCE_FILE) subtitleStatus = "Keine Datei bei OpenSubtitles – übersetze stattdessen die Spur des Films"
+                if (chosen == PlayerMemory.SOURCE_FILE) subtitleStatus = (onlineProblem ?: noFileReason()) + " – übersetze stattdessen die Spur des Films"
                 return@launch
             }
             if (!settings.translationEnabled) {
@@ -1802,10 +1809,18 @@ class PlayerActivity : ComponentActivity() {
             subtitleStatus = when {
                 request == null -> "Dieser Sender hat keine Untertitel, die übersetzt werden könnten"
                 !settings.onlineSubtitlesEnabled ->
-                    "Dieser Film hat keine Untertitel. Mit OpenSubtitles (Einstellungen → Einrichtung per Handy) gibt es welche für fast jeden Film"
+                    "Dieser Film hat keine Untertitel. " + noFileReason() + " – damit gibt es welche für fast jeden Film"
                 else -> "Für diesen Film gibt es weder eingebettete noch Online-Untertitel"
             }
         }
+    }
+
+    /** Warum keine Datei von OpenSubtitles kam – ohne eigenen API-Schlüssel auf diesem Gerät wird gar nicht gesucht. */
+    private fun noFileReason(): String = when {
+        settings.openSubtitlesApiKey.isBlank() ->
+            "OpenSubtitles: auf diesem Gerät ist kein API-Key eingetragen (Einstellungen → Untertitel)"
+        !settings.onlineSubtitles -> "OpenSubtitles ist in den Einstellungen aus"
+        else -> "Keine Datei bei OpenSubtitles"
     }
 
     private fun attachLoaded(language: String, result: SubtitleRepository.Result) {

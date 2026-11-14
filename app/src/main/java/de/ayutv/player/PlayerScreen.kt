@@ -1058,6 +1058,12 @@ private fun MenuOverview(activity: PlayerActivity) {
                     activity.toggleCast()
                 }
             }
+            // Puffer, Datenrate und Decoder anzeigen – auf dem Fernseher über die Info-Taste, auf dem Handy nur hier.
+            item {
+                ActionRow("📊", if (activity.showTech) "Technik-Zeile ausblenden (Puffer, Datenrate)" else "Technik-Zeile anzeigen (Puffer, Datenrate)") {
+                    activity.toggleTech()
+                }
+            }
             if (activity.isLive) {
                 item { MenuHeader("Sender") }
                 item {

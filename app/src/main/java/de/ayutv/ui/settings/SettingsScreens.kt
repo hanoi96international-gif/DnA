@@ -459,7 +459,8 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                         SettingRow(
                             "Zugänge prüfen",
                             "",
-                            "Testet den OpenSubtitles-Zugang sofort.",
+                            // Auf dem Handy fehlt die Einrichtungs-Karte, in der das Ergebnis sonst steht: hier zeigen.
+                            if (touch && keyReport != null) keyReport.orEmpty() else "Testet den OpenSubtitles-Zugang sofort.",
                         ) {
                             keyReport = "Prüfe …"
                             scope.launch {
