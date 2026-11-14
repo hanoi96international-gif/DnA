@@ -338,8 +338,10 @@ class DnaEngineCore(
     private var catchUpHolds = ArrayDeque<Long>()
 
     /** Auf dem Video-Thread: Halt beginnen (true) oder nicht möglich (zu oft, zu wenig Vorrat). */
-    private fun startCatchUpHold(behindUs: Long): Boolean {
-        if (catchUpHold || paused || buffering || !audioStarted || behindUs > CATCH_UP_HOLD_MAX_US) return false
+    private fun startCatchUpHold(behindUs: Long, decodeSpeed: Double): Boolean {
+        // Nur, wenn der Decoder an sich Echtzeit schafft (nur kurz zurückgefallen): Schafft er dauerhaft weniger,
+        // liefe das Bild sonst in Zeitlupe (Rundgang: 31 von 50 Bildern/s, Uhr in 5 s nur 2,9 s weiter).
+        if (catchUpHold || paused || buffering || !audioStarted || behindUs > CATCH_UP_HOLD_MAX_US || decodeSpeed < CATCH_UP_MIN_SPEED) return false
         val now = SystemClock.elapsedRealtime()
         while (catchUpHolds.isNotEmpty() && now - catchUpHolds.first() > 60_000) catchUpHolds.removeFirst()
         if (catchUpHolds.size >= CATCH_UP_HOLDS_PER_MINUTE) return false
@@ -1779,6 +1781,11 @@ class DnaEngineCore(
                     }
                     skipToKey = false
                 }
+                if (hurryInput && h264 && !sample.keyframe && h264Disposable(sample.data)) {
+                    droppedFrames++
+                    droppedNonRef++
+                    continue
+                }
                 if (dropRasl) {
                     when (firstVclType(sample.data)) {
                         8, 9 -> continue // RASL nach dem Einstieg: nicht dekodierbar, verwerfen
@@ -1825,6 +1832,7 @@ class DnaEngineCore(
         /** Ausgabe zum passenden Zeitpunkt zeigen (oder verwerfen, wenn zu spät bzw. vor der Spulstelle). */
         private fun render(index: Int, ptsUs: Long) {
             if (released) return
+            noteDecodeSpeed(ptsUs)
             if (ptsUs < seekTargetUs - 1_000) {
                 // Vor der Spulstelle: dekodiert, aber nicht gezeigt.
                 codec.releaseOutputBuffer(index, false)
@@ -1852,8 +1860,18 @@ class DnaEngineCore(
             if (firstFrameShown && !tunneled) {
                 if (earlyUs < -LATE_US) {
                     if (lateSinceNs == 0L) lateSinceNs = nowNs
-                    if (!catchUpHold && (earlyUs < -CATCH_UP_US || nowNs - lateSinceNs > LATE_SUSTAINED_NS)) startCatchUpHold(-earlyUs)
-                } else lateSinceNs = 0L
+                    if (!catchUpHold && (earlyUs < -CATCH_UP_US || nowNs - lateSinceNs > LATE_SUSTAINED_NS)) {
+                        // Halt nicht möglich (Decoder zu langsam): H.264 – Bilder ohne Bezug gar nicht erst dekodieren.
+                        if (!startCatchUpHold(-earlyUs, decodeSpeed) && h264 && !hurryInput) {
+                            hurryInput = true
+                            hurrySinceNs = nowNs
+                            DnaLog.w(TAG, "$name schafft nur ${(decodeSpeed * 100).toInt()} % Echtzeit – lasse Bilder ohne Bezug aus")
+                        }
+                    }
+                } else {
+                    lateSinceNs = 0L
+                    if (hurryInput && earlyUs > -CAUGHT_UP_US) hurryInput = false
+                }
                 if (catchUpHold && (earlyUs > -CAUGHT_UP_US ||
                         SystemClock.elapsedRealtime() - catchUpHoldSinceMs > CATCH_UP_HOLD_MAX_US / 1000 + 1_000)
                 ) endCatchUpHold(if (earlyUs > -CAUGHT_UP_US) "eingeholt" else "Zeit abgelaufen")
@@ -1869,7 +1887,8 @@ class DnaEngineCore(
                 }
                 // Weit zurück (Decoder schafft das Tempo nicht): zum nächsten Schlüsselbild springen, falls eins
                 // im Vorrat liegt – sonst wird der Rückstand nie kleiner.
-                firstFrameShown && earlyUs < -CATCH_UP_US && keyframeQueued() -> {
+                firstFrameShown && earlyUs < -CATCH_UP_US && keyframeQueued() &&
+                    (!hurryInput || System.nanoTime() - hurrySinceNs > HURRY_BEFORE_SKIP_NS) -> {
                     droppedFrames++
                     skippedToKey++
                     if (!skipToKey) DnaLog.w(TAG, "Bild ${-earlyUs / 1000} ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild " +
@@ -1918,6 +1937,27 @@ class DnaEngineCore(
         private var skippedToKey = 0
         /** Seit wann jedes Bild über [LATE_US] zu spät kommt (0 = gerade nicht). */
         private var lateSinceNs = 0L
+        private val h264 = config.mime == Codec.H264.mime
+        /** Rückstand bei zu langsamem Decoder: H.264-Bilder ohne Bezug vor dem Dekodieren verwerfen. */
+        @Volatile private var hurryInput = false
+        private var hurrySinceNs = 0L
+        private var droppedNonRef = 0
+        /** Wie schnell der Decoder Bilder liefert, gemessen an ihren Zeitstempeln (1.0 = Echtzeit, Fenster 2 s). */
+        private var decodeSpeed = 1.0
+        private var speedStartMs = 0L
+        private var speedStartPts = 0L
+
+        private fun noteDecodeSpeed(ptsUs: Long) {
+            val now = SystemClock.elapsedRealtime()
+            if (speedStartMs == 0L || ptsUs < speedStartPts) {
+                speedStartMs = now
+                speedStartPts = ptsUs
+            } else if (now - speedStartMs >= 2_000) {
+                decodeSpeed = (ptsUs - speedStartPts) / 1000.0 / (now - speedStartMs)
+                speedStartMs = now
+                speedStartPts = ptsUs
+            }
+        }
         private var maxBehindUs = 0L
 
         private fun noteLateness(earlyUs: Long) {
@@ -1927,7 +1967,10 @@ class DnaEngineCore(
             val now = SystemClock.elapsedRealtime()
             if (now - lateLogAt >= 5_000 && lateCount > 0) {
                 DnaLog.i(TAG, "Bild: im Mittel ${lateSumUs / lateCount / 1000} ms spät, gezeigt $renderedFrames, verworfen $droppedFrames" +
-                    (if (droppedLate + skippedToKey > 0) " (zu spät $droppedLate, bis Schlüsselbild $skippedToKey, am weitesten zurück ${maxBehindUs / 1000} ms)" else ""))
+                    (if (droppedLate + skippedToKey > 0) " (zu spät $droppedLate, bis Schlüsselbild $skippedToKey, am weitesten zurück ${maxBehindUs / 1000} ms)" else "") +
+                    (if (droppedNonRef > 0) ", ohne Bezug ausgelassen $droppedNonRef" else "") +
+                    ", Decoder ${(decodeSpeed * 100).toInt()} % Echtzeit")
+                droppedNonRef = 0
                 droppedLate = 0
                 skippedToKey = 0
                 maxBehindUs = 0
@@ -2851,13 +2894,15 @@ class DnaEngineCore(
          * Auf dem Fire TV Stick (1,6 GB) hätte 4K in Software Speicher und Grafik so ausgelastet, dass das ganze Gerät
          * hängen kann (Streifenbild, Absturz) – dort lieber eine klare Meldung als ein abgestürzter Stick.
          */
-        private val softVideoAllowed: Boolean by lazy {
-            if (isTv) return@lazy false
-            val am = appContext?.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
-                ?: return@lazy false
+        @Volatile private var softVideoKnown: Boolean? = null
+        private val softVideoAllowed: Boolean get() {
+            softVideoKnown?.let { return it }
+            val ctx = appContext ?: return false
+            if (isTv) return false.also { softVideoKnown = it }
+            val am = ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return false
             val info = android.app.ActivityManager.MemoryInfo()
             runCatching { am.getMemoryInfo(info) }
-            !am.isLowRamDevice && info.totalMem >= 2_560L * 1024 * 1024
+            return (!am.isLowRamDevice && info.totalMem >= 2_560L * 1024 * 1024).also { softVideoKnown = it }
         }
 
         fun softVideoSupported(mime: String): Boolean = softVideoAllowed && NativeVideo.supports(mime)
@@ -2957,6 +3002,10 @@ class DnaEngineCore(
         private const val CAUGHT_UP_US = 40_000L
         /** Höchstens so viele Halte pro Minute (kommt das Bild dauerhaft nicht mit, hilft nur das Überspringen). */
         private const val CATCH_UP_HOLDS_PER_MINUTE = 3
+        /** Halt nur, wenn der Decoder mindestens so schnell wie Echtzeit liefert (sonst Zeitlupe). */
+        private const val CATCH_UP_MIN_SPEED = 0.97
+        /** So lange (ns) dürfen ausgelassene Bilder ohne Bezug den Rückstand abbauen, bevor zum Schlüsselbild gesprungen wird. */
+        private const val HURRY_BEFORE_SKIP_NS = 3_000_000_000L
         /** Früher als das wird ein Bild zurückgehalten (sonst mit Zeitpunkt an die Bildfläche gegeben). */
         private const val HOLD_US = 80_000L
         /** Größer als das ist ein Zeitsprung (kein normales Vor- oder Nacheilen). */
@@ -3086,9 +3135,13 @@ class DnaEngineCore(
         } ?: false
 
         /** Fernseher/Stick (Leanback): Dort stellt die App die Bildwechselrate selbst um (FrameRateMatcher). */
-        private val isTv: Boolean by lazy {
-            runCatching { appContext?.packageManager?.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) == true }.getOrDefault(false)
-        }
+        // Erst merken, wenn der App-Kontext da ist: Früh abgefragt (vor dem ersten Player) blieb sonst „kein Fernseher“
+        // bzw. „kein Software-Decoder“ für den ganzen Lauf stehen.
+        @Volatile private var isTvKnown: Boolean? = null
+        private val isTv: Boolean get() = isTvKnown ?: appContext?.let { ctx ->
+            runCatching { ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) }.getOrDefault(false)
+                .also { isTvKnown = it }
+        } ?: false
 
         /**
          * Ton-Bild-Abgleich (µs): Beamer und Fernseher mit Bildverarbeitung zeigen das Bild verzögert, die Soundbar spielt
@@ -3195,6 +3248,28 @@ class DnaEngineCore(
         fun hasDecoder(mime: String): Boolean = codecList.any { it.supportedTypes.any { t -> t.equals(mime, true) } }
 
         /** NAL-Typ des ersten Bild-NALs (HEVC), -1 wenn keiner. */
+        /**
+         * H.264: Bild, auf das sich kein anderes bezieht (alle Slices mit nal_ref_idc 0, etwa B-Bilder bei IBBP) – lässt
+         * sich auslassen, ohne dass folgende Bilder Fehler bekommen.
+         */
+        fun h264Disposable(data: ByteArray): Boolean {
+            var i = 0
+            var slices = 0
+            while (i + 3 < data.size) {
+                if (data[i].toInt() == 0 && data[i + 1].toInt() == 0 && data[i + 2].toInt() == 1) {
+                    val header = data[i + 3].toInt()
+                    val type = header and 0x1F
+                    if (type == 5) return false
+                    if (type == 1) {
+                        if ((header shr 5) and 3 != 0) return false
+                        slices++
+                    }
+                    i += 3
+                } else i++
+            }
+            return slices > 0
+        }
+
         fun firstVclType(data: ByteArray): Int {
             var i = 0
             while (i + 3 < data.size) {
