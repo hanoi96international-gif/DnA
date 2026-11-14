@@ -140,7 +140,7 @@ class EmbeddedSubtitles(
                 if (endMs >= 0) existing.endMs = endMs
                 return
             }
-            val text = cues.mapNotNull { it.text?.toString()?.trim() }.filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { null }
+            val text = SubtitleLines.distinctLines(cues.mapNotNull { it.text?.toString()?.trim() }).ifEmpty { null }
             val image = if (text == null && wantsImages(format)) toGray(cues) else null
             // Bild-Untertitel (PGS, DVB), deren Bild niemand braucht: trotzdem die Zeit merken – sie sind Taktgeber für die
             // Ausrichtung geladener Untertitel (OpenSubtitles). Mit ExoPlayer kam das über addTiming; mit der DNA Engine
