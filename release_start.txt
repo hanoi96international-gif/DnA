@@ -1,0 +1,7 @@
+Starting: Intent { cmp=de.ayutv/.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: de.ayutv/.MainActivity
+TotalTime: 442
+WaitTime: 444
+Complete

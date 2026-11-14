@@ -1,0 +1,105 @@
+db_version=5 playlists_before=0 encrypted=true
+upgrade_data seeded=false custom_group=false items=0 favorite=false hidden=false
+regex: plain=Hallo Welt title=Der Film year=2020
+regex: epg_key_ok=true
+import_ms=87 channels=8 programmes=72 sync=Idle
+xtream: wrong_login_rejected=true login=ok import_ms=81 channels_total=10 movies=9 series=1 episodes=2 sync=Idle
+same_account: original=2 again=2 before=2 after=2
+sync_groups: result=Übernommen: 0 Favoriten, 0 Verlaufseinträge, 1 eigene Gruppen. back=true items=[1:c:hd.test:http://10.0.2.2:8000/hd50.ts]
+sport: events=[Borussia Dortmund – Eintracht Frankfurt (Fußball: Bundesliga, 7. Spieltag)] reminders=[Borussia Dortmund – Eintracht Frankfurt (Fußball: Bundesliga, 7. Spieltag)] variants=[]
+sport_reminder_channels=[DE | Xtream HD/hd.test]
+sport_crests: 3 von 3 gefunden
+sport_headline: Borussia Dortmund – Eintracht Frankfurt (Fußball: Bundesliga, 7. Spieltag)
+live_preview: sichtbare Sender=9 preview=true
+settings_playlists: first=CI-Test name=[Rect(933, 212 - 1036, 254)] groups=2 height=1080
+ui_reduced: reduced=true ruhig: 237 Bilder, über 25 ms: 98,3 %, über 50 ms: 78,9 %, längstes 598 ms · am langsamsten: Live TV 100 % über 25 ms (weniger Bewegung aktiv) · langsame Bilder im Mittel: vorher belegt (Hauptthread) 27,1 ms, Eingabe/Animation 8,8 ms, Aufbau/Anordnung 0,4 ms, Zeichnen 8,3 ms, Übergabe 41,6 ms, Rest (Warten auf Grafik/Bildschirm) 16,7 ms · Hauptthread lange belegt durch: Einstellungen: ActivityThread$H/null 4× (Ø 79 ms), Start: Handler/AndroidUiDispatcher$dispatchCallback$1 5× (Ø 49 ms), Live TV: ActivityThread$H/null 2× (Ø 97 ms), Live TV: Handler/AndroidUiDispatcher$dispatchCallback$1 2× (Ø 40 ms)
+live[0] HD Test 50fps: ready=true startup_ms=616 1920x1080 fps=50.0 codec=avc decoder=OMX.android.goldfish.h264.decoder dropped=201 hdr= audio=mp4a-latm/-1ch audio_decoder=c2.android.aac.decoder message=null
+zap1 now=UHD Test HEVC message=Verbindung wird wiederhergestellt … (1/3)
+zap: ready=true startup_ms=338 now=HLS Test
+zap_burst: ready=true moved=3 expected=3 now=Wackelige Leitung
+back_zap: previous=true back=true returned=true
+live_mini: mini=true playing=true full=true finishing=false
+live[1] UHD Test HEVC: ready=false startup_ms=0 -1x-1 fps=0.0 codec=hevc decoder= dropped=0 hdr= audio=mp4a-latm/-1ch audio_decoder= message=Verbindung wird wiederhergestellt … (1/3)
+live[2] HLS Test: ready=true startup_ms=462 1280x720 fps=25.0 codec=avc decoder=OMX.android.goldfish.h264.decoder dropped=391 hdr= audio=mp4a-latm/-1ch audio_decoder=c2.android.aac.decoder message=null
+live[3] Atmos Ton Test: ready=true startup_ms=0 0x0 fps=0.0 codec= decoder= dropped=0 hdr= audio=eac3/-1ch audio_decoder=DNA-Decoder (eac3) message=null
+live[4] EAC3 Ton Test: ready=true startup_ms=503 1280x720 fps=25.0 codec=avc decoder=OMX.android.goldfish.h264.decoder dropped=0 hdr= audio=eac3/-1ch audio_decoder=DNA-Decoder (eac3) message=null
+live[5] Wackelige Leitung: ready=true startup_ms=361 1920x1080 fps=50.0 codec=avc decoder=OMX.android.goldfish.h264.decoder dropped=178 hdr= audio=mp4a-latm/-1ch audio_decoder=c2.android.aac.decoder message=null
+live[6] Hängende Leitung: ready=true startup_ms=475 1920x1080 fps=50.0 codec=avc decoder=OMX.android.goldfish.h264.decoder dropped=217 hdr= audio=mp4a-latm/-1ch audio_decoder=c2.android.aac.decoder message=null
+live[7] DVB Untertitel Test: ready=true startup_ms=461 1280x720 fps=25.0 codec=avc decoder=OMX.android.goldfish.h264.decoder dropped=0 hdr= audio=mpeg/-1ch audio_decoder=DNA-Decoder (mp2) message=null
+timeshift Wackelige Leitung: ready=true rewindable_ms=16829
+timeshift: recorded=true paused=true resumed=true behind_ms=6179 rewound=true behind_after_rewind_ms=16627 back_to_live=true message=null
+catchup: channel=DE | Xtream 4K days=3 url=/timeshift/ayu/test/30/2026-11-14:13-46/102.ts ready=true
+reminder: set=true stored=true removed=true
+parental: before=10 locked=8 wrong_pin_accepted=false unlocked=10
+afr_tunneling: playing_s=30 fps=50.0 measured=true messages=[]
+flaky: playing_s=50 buffering_s=0 cushion=false drops=Trennungen 3× in 10 Min. (vom Anbieter beendet: 3, keine Daten: 0, andere: 0; zuletzt: Anbieter hat die Verbindung beendet) message=null
+stall: playing_s=49 errors=0 drops=Trennungen 2× in 10 Min. (vom Anbieter beendet: 0, keine Daten: 2, andere: 0; zuletzt: Zeitüberschreitung (keine Daten)) message=null
+opensubtitles: kein Schlüssel (die App enthält bewusst keinen)
+vod launched state=RESUMED
+vod DE - Xtream Film (2023) [FHD]: ready=true text_tracks=1 subtitles_off_by_default=true
+menu_pages: page=SUBTITLES overview=true closed=true
+vod subtitle_enabled=true dropped=0
+vod speech_tap heard_s=12
+translate_id preroll_max=0.20214501 playing=false
+translate_id: ok=true target=id cue=Terima kasih untuk semuanya. statuses=[Übersetze Englisch → Indonesisch mit DnA-Übersetzer (auf dem Gerät), Lade Übersetzer Englisch → Indonesisch: 0 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 5 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 10 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 15 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 20 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 25 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 30 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 35 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 40 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 45 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 50 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 55 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 60 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 65 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 70 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 75 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 80 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 85 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 90 % (einmalig ca. 115 MB), Lade Übersetzer Englisch → Indonesisch: 95 % (einmalig ca. 115 MB), Starte Übersetzer Englisch → Indonesisch … (frei: 1934 MB)]
+translate_de: target=de cue=Danke für alles.
+vod after_seek position_ms=43697 message=null
+deepl_batch: shown=true ms=9047 requests=6 lines=16 preroll=true originals=0 cue=TR:Hello, how are you?
+subtitle_source fit: synced=true ms=1038 offset=-1700 percent=100 external=de live=null
+subtitle_source miss: switched=true ms=9344 auto=0 status=[Übersetze Englisch → Deutsch mit DeepL, OpenSubtitles passt nur 0 % – übersetze stattdessen die Spur des Films]
+subtitle_source remembered: direct=true external=null
+embedded_prep: outcome=DONE lines=220 ms=195513 sample=[Hallo, wie geht's?, Ich sagte doch,/wir hätten nie herkommen sollen., Wo ist mein Bruder?]
+embedded_prep player: shown=true preroll=false cue=Hallo, wie geht's?
+subtitle_sync: ok=true timing=SubtitleTiming(ratio=1.0, offsetMs=-2500) cue=Bonjour numéro 12 statuses=[Untertitel automatisch angepasst (-2,5 s)]
+subtitle_manual: steps=0 line=Bonjour numéro 13 anchored=true shift=-2,2 s confirmed=✓ Ausgerichtet (-2,2 s). Passt es noch nicht ganz: in ein paar Minuten einfach noch eine Zeile bestätigen.
+subtitle_elastic: aligned=true percent=100 checked=6 right=6 badge=✓ Untertitel Zeile für Zeile an der Spur des Films ausgerichtet · passt 100 %
+wrong_subtitles: rejected=true synced=false statuses=[Diese Untertitel gehören zu einem anderen Film. Suche passende …, Übersetze Französisch → Italienisch mit DnA-Übersetzer (auf dem Gerät)]
+episode Folge 1: ready=true message=null
+episode_extras: next=Folge 2 countdown=true seconds=45 countdown_stopped=true
+audio_ahead: heard=true seconds=12 position=2s
+audio_tests=5
+audio Tontest TrueHD 5.1 (2025): ready=true advanced_ms=5060 audio=true-hd/6ch decoder=DNA-Decoder (truehd) tracks=[audio/true-hd] message=null status=Lade Übersetzer Englisch → Italienisch: 95 % (einmalig ca. 115 MB)
+audio Tontest DTS 5.1 erzeugt (2025): ready=true advanced_ms=5028 audio=vnd.dts/6ch decoder=DNA-Decoder (dca) tracks=[audio/vnd.dts] message=null status=Starte Übersetzer Englisch → Italienisch … (frei: 1925 MB)
+audio Tontest DTS-HD MA (2025): ready=true advanced_ms=5067 audio=vnd.dts/8ch decoder=DNA-Decoder (dca) tracks=[audio/vnd.dts] message=null status=null
+audio Tontest DTS-X (2025): ready=true advanced_ms=4999 audio=vnd.dts/8ch decoder=DNA-Decoder (dca) tracks=[audio/vnd.dts] message=null status=null
+audio Tontest DTS echt (2025): ready=true advanced_ms=5008 audio=vnd.dts/6ch decoder=DNA-Decoder (dca) tracks=[audio/vnd.dts] message=null status=null
+mt de: first_ms=1088 per_sentence_ms=716 result=Hallo, wie geht's? | Ich sagte doch,/wir hätten nie herkommen sollen. | - Wo ist er?/- Ich weiß es nicht. progress_events=1
+mt pl (en-mul): Dziękuję za wszystko.
+mt installed=[en-de, en-id, en-it, en-mul, fr-en] bytes=912654260
+mt_names: names=[Will, Hope] plain=Ich habe Will von dem Auto erzählt. | Wo ist Hope heute Abend? | Will, komm her! | Hast du Hope gesehen? smart=Ich habe Will von dem Wagen erzählt. | Wo ist Hope heute Abend? | Will, komm her! | Hast du Hope gesehen? | Ja, er.
+file_translation: ok=true cue=Wo ist mein Bruder? target=null statuses=[Übersetze Englisch → Deutsch mit DnA-Übersetzer (auf dem Gerät), Starte Übersetzer Englisch → Deutsch … (frei: 1888 MB)]
+translator_selftest: Texterkennung ok: „Where is my brother?“ (1107 ms) | Übersetzung Deutsch ok: „Wo ist mein Bruder?“ (650 ms, inkl. Laden) | Rechenkern: ONNX Runtime | Speicher Übersetzer: höchstens 497 MB, belegt 94 MB | Prozessor: Android virtual processor
+translator_selftest_kern: Texterkennung ok: „Where is my brother?“ (773 ms) | Übersetzung Spanisch ok: „¿Dónde está mi hermano?“ (3498 ms, inkl. Laden) | Rechenkern: DnA-Rechenkern (ohne native Bibliothek) | Speicher Übersetzer: höchstens 456 MB, belegt 63 MB | Prozessor: Android virtual processor
+bitmap_translation tracks=[en/application/pgs]
+bitmap_translation: ok=true cue=Wo ist mein Bruder? seen=[Wo ist mein Bruder?] statuses=[Übersetze Bild-Untertitel Englisch → Deutsch mit DnA-Übersetzer (auf dem Gerät), Übersetze Bild-Untertitel Englisch → Deutsch mit DnA-Übersetzer (auf dem Gerät), Starte Übersetzer Englisch → Deutsch … (frei: 1862 MB)]
+bitmap_translation mt_process=de.ayutv:mt pid=3876
+translator_killed: engine=Bild 946 (7042–46500 ms), Ton 1853 (6826–46336 ms), 3210 KB, Ziel 519 ms, erstes Bild 542 ms, Uhr 6493 ms, Ton: läuft, Bild-Decoder OMX.android.goldfish.h264.decoder, Ende false, Start ok true
+translator_killed: film_alive=true near_end_before=false state=3 position=6495 status=null statuses=[Starte Übersetzer Englisch → Deutsch … (frei: 1862 MB), Starte Übersetzer Englisch → Deutsch … (frei: 1857 MB)]
+translator_resumed: ok=true status=null
+big: import_ms=3974 channels_total=3010 programmes_total=34598 now_playing_all_ms=51 now_found=3003 sync=Idle
+phone_setup: url=http://10.0.2.16:8095/239100 get=200 has_form=true post=200 user=ayu-ci report=✗ OpenSubtitles: kein API-Key eingetragen
+backup: get=200 bytes=3654 has_playlists=true restore=200 report=✓ Übernommen: 3 Playlists (0 neu, werden jetzt geladen), 0 Favoriten, 0 eigene Gruppen, 0 ausgeblendete Gruppen und die Einstellungen. playlists=3→3 favorites=0→0
+search_all: channels=3000 programmes=0 ms=31
+search_history=[nachrichten, Sender]
+playlist_toggle: before=3010 off=10 search_off=0 on=3010
+custom_groups: hidden_in_all=false custom=3 favorites_has=true custom_order_ok=true favorite_order_ok=true provider_order_ok=true label=📁 Meine Sender
+channel_check: hd=1080p in 113 ms, kaputt=0
+watchlist: added=true listed=true removed=true
+line_check: HD Test 50fps: Antwort nach 9 ms, Datenrate des Senders 714.2 Mbit/s, keine Aussetzer empfehlung=BALANCED
+hls_bitrate: kbps=2547 line_check=2547 variants=1 
+live_scores: matches=28 first=Hamburger SV – Borussia Mönchengladbach 3:1 finished=true
+report: code=200 bytes=119665 sections=[Netz, Wiedergabe (letzte 48 h), Oberfläche, Apps, Einstellungen, Playlists, Sender ohne TV-Guide, Eigene Daten, Untertitel, Übersetzer, Letzte Wiedergabe, Protokoll] leaked=0
+ui_frames: Menüs: ruhig: 237 Bilder, über 25 ms: 98,3 %, über 50 ms: 78,9 %, längstes 598 ms · am langsamsten: Live TV 100 % über 25 ms · langsame Bilder im Mittel: vorher belegt (Hauptthread) 27,1 ms, Eingabe/Animation 8,8 ms, Aufbau/Anordnung 0,4 ms, Zeichnen 8,3 ms, Übergabe 41,6 ms, Rest (Warten auf Grafik/Bildschirm) 16,7 ms · Hauptthread lange belegt durch: Player: ActivityThread$H/null 74× (Ø 89 ms), Player: ActivityThread$H/Instrumentation$SyncRunnable 26× (Ø 146 ms), Player: Handler/kt 19× (Ø 51 ms), Einstellungen: ActivityThread$H/null 4× (Ø 79 ms) reduced=false
+pip: ready=true format=1280x720 swapped=true reminder_shown=true switched=true message=null
+phone_helper: address=http://10.0.2.16:8097 served=2 helper_lines=2 result=[Hallo, wie geht's?, Vielen Dank.]
+device_check: Gerät: unknown Android SDK built for x86_64, Android 11, 64 Bit, RAM 3131 MB (frei 1804 MB)|Speicher frei: 4,5 GB · Übersetzungsmodelle 984 MB · Texterkennung 7 MB · Datenbank 5 MB|Menüs: ruhig: 237 Bilder, über 25 ms: 98,3 %, über 50 ms: 78,9 %, längstes 598 ms · am langsamsten: Live TV 100 % über 25 ms · langsame Bilder im Mittel: vorher belegt (Hauptthread) 27,1 ms, Eingabe/Animation 8,8 ms, Aufbau/Anordnung 0,4 ms, Zeichnen 8,3 ms, Übergabe 41,6 ms, Rest (Warten auf Grafik/Bildschirm) 16,7 ms · Hauptthread lange belegt durch: Player: ActivityThread$H/null 77× (Ø 90 ms), Player: ActivityThread$H/Instrumentation$SyncRunnable 28× (Ø 151 ms), Player: Handler/kt 20× (Ø 51 ms), Einstellungen: ActivityThread$H/null 4× (Ø 79 ms)|Übersetzung (ONNX Runtime): 628 ms pro Zeile, Laden 0 s – kommt beim Schauen mit|Leitung: HD Test 50fps: Antwort nach 3 ms, Datenrate des Senders 713.5 Mbit/s, keine Aussetzer|OpenSubtitles: ohne Konto (5 Downloads/Tag) usage=Übersetzungsmodelle=1032MB, Texterkennung=7MB, Datenbank=5MB, Logos und Poster=0MB, Untertitel=0MB cleaned=nichts zu löschen
+proxy: http=200 http-proxy anbieter.example socks=200 socks-proxy anbieter.example wrong=407  reported=Proxy lehnt die Anmeldung ab (Benutzer oder Passwort falsch) seen=[http http://anbieter.example/ping auth=true, socks anbieter.example, http http://anbieter.example/ping auth=true, http http://anbieter.example/ping auth=true]
+play_on_tv: tv=DnA-TV Android SDK built for x86_64 started=true foreign=true
+dna_engine: engine=true video=true advanced_ms=5012 rendered=89 dropped=161 rewindable=5886 info=DNA Engine · OMX.android.goldfish.h264.decoder DNA Player · DNA Engine · OMX.android.goldfish.h264.decoder state=3 video=1920x1080
+FEHLER in dna_engine: AssertionError: DNA Engine zeigt zu wenige Bilder (89 in 5 s, 161 verworfen)
+dna_timeshift: rewindable=13754 behind_paused=4839 resumed=true behind_playing=5262 live=true info=DNA Engine · OMX.android.goldfish.h264.decoder DNA Player · DNA Engine · OMX.android.goldfish.h264.decoder state=3 video=1920x1080
+dna_dvb_subtitles: tracks=application/dvbsubs/de/sel=true shown=true info=Ton: eigener Decoder für MPEG_AUDIO DNA Player · DNA Engine · OMX.android.goldfish.h264.decoder state=3 video=1280x720
+dna_engine_4k: shown=false position_ms=0 advanced_ms=0 rendered=0 dropped=0 info=Bild-Decoder scheitern an video/hevc 3840×2160 DNA Player · DNA Engine state=1 video=0x0
+dna_engine_4k: kein 4K-Decoder, Software-Decoder aus – klare Meldung statt Bild
+uhd_selftest: done=true result=✗ 4K läuft hier nicht (Bild-Decoder scheitern an video/hevc 3840×2160)
+done failures=1

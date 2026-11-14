@@ -1,0 +1,27 @@
+--------- beginning of system
+--------- beginning of main
+--------- beginning of kernel
+11-14 15:02:41.377 I/DnaEngine( 4377): — Neuer Stream: 10.0.2.2 (.m3u8), live · Android 30, unknown Android SDK built for x86_64
+11-14 15:02:41.490 I/DnaEngine( 4377): Start: erstes Schlüsselbild empfangen nach 113 ms
+11-14 15:02:41.491 I/DnaEngine( 4377): Start: erste Bilddaten nach 114 ms
+11-14 15:02:41.498 I/DnaEngine( 4377): Datenrate Bild: 2.2 Mbit/s
+11-14 15:02:41.580 I/DnaEngine( 4377): Bild: video/avc 1280×720 8 Bit · Decoder-Reihenfolge: OMX.android.goldfish.h264.decoder, OMX.google.h264.decoder
+11-14 15:02:41.671 I/DnaEngine( 4377): Video: OMX.android.goldfish.h264.decoder video/avc 1280×720 8 Bit
+11-14 15:02:41.671 I/DnaEnginePlayer( 4377): DNA Engine · OMX.android.goldfish.h264.decoder
+11-14 15:02:41.675 I/DnaEngine( 4377): OMX.android.goldfish.h264.decoder: erstes Schlüsselbild hinein (22 KB, synchron)
+11-14 15:02:41.797 I/DnaEngine( 4377): OMX.android.goldfish.h264.decoder: erste Ausgabe nach 122 ms (11 Proben hinein)
+11-14 15:02:41.797 I/DnaEngine( 4377): OMX.android.goldfish.h264.decoder: erstes Bild gezeigt (150 ms vor/nach der Uhr)
+11-14 15:02:41.799 I/DnaEngine( 4377): Start: erstes Bild gezeigt nach 422 ms
+11-14 15:02:41.913 I/DnaEngine( 4377): Ton: AAC_ADTS 48000 Hz 1 Kanäle über c2.android.aac.decoder
+11-14 15:02:41.939 I/DnaEngine( 4377): Start: Ton läuft nach 562 ms
+11-14 15:02:41.942 I/DnaEngine( 4377): Bild: im Mittel -40 ms spät, gezeigt 1, verworfen 0
+11-14 15:02:42.054 I/DnaEngine( 4377): Bildrate des Stroms: 24.67 → 25.0 fps
+11-14 15:02:43.903 I/DnaEngine( 4377): ⚠ Bild 1862 ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild (Bild 0 ms, Uhr 1862 ms, 1037 Bilder im Vorrat)
+11-14 15:02:43.916 I/DnaEngine( 4377): ⚠ Bild 1842 ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild (Bild 40 ms, Uhr 1882 ms, 997 Bilder im Vorrat)
+11-14 15:02:43.954 I/DnaEngine( 4377): ⚠ Bild 1746 ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild (Bild 160 ms, Uhr 1906 ms, 945 Bilder im Vorrat)
+11-14 15:02:43.966 I/DnaEngine( 4377): ⚠ Bild 1722 ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild (Bild 200 ms, Uhr 1923 ms, 897 Bilder im Vorrat)
+11-14 15:02:43.978 I/DnaEngine( 4377): ⚠ Bild 1695 ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild (Bild 240 ms, Uhr 1936 ms, 847 Bilder im Vorrat)
+11-14 15:02:43.991 I/DnaEngine( 4377): ⚠ Bild 1630 ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild (Bild 320 ms, Uhr 1950 ms, 796 Bilder im Vorrat)
+11-14 15:02:44.000 I/DnaEngine( 4377): ⚠ Bild 1598 ms hinter der Uhr – weiter ab dem nächsten Schlüsselbild (Bild 360 ms, Uhr 1957 ms, 747 Bilder im Vorrat)
+11-14 15:02:47.090 I/DnaEngine( 4377): Bild: im Mittel -12 ms spät, gezeigt 53, verworfen 341 (zu spät 0, bis Schlüsselbild 341, am weitesten zurück 1862 ms)
+11-14 15:02:52.547 I/DnaEngine( 4377): Bild: im Mittel -763 ms spät, gezeigt 57, verworfen 341
