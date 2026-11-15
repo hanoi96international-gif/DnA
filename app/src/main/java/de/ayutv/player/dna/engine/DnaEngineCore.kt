@@ -184,8 +184,11 @@ class DnaEngineCore(
             !clock.started -> seekTargetUs
             // Hauptthread (Player-Takt, Fortschrittsanzeigen): den zuletzt von Bild/Ton berechneten Wert weiterrechnen.
             // Die Uhr fragt sonst die Tonausgabe ab (Systemaufruf, auf dem Fire TV teils 75 ms) und sperrte die Bedienung.
-            android.os.Looper.myLooper() == android.os.Looper.getMainLooper() && !paused && !buffering ->
-                (clock.recentUs() ?: clock.nowUs()).coerceAtLeast(0)
+            // Steht die Uhr (angehalten, puffert), gilt der letzte Wert unverändert weiter: Gerade beim Puffern fragte der
+            // Player-Takt sonst alle 100 ms die Tonausgabe ab und wartete dabei auf Bild- und Ton-Thread (Kurzbericht
+            // 15.11.: Hauptthread 16× im Mittel 82 ms durch den Player-Takt belegt).
+            android.os.Looper.myLooper() == android.os.Looper.getMainLooper() ->
+                (clock.recentUs(stopped = paused || buffering || catchUpHold) ?: clock.nowUs()).coerceAtLeast(0)
             else -> clock.nowUs().coerceAtLeast(0)
         }
 
@@ -1605,8 +1608,10 @@ class DnaEngineCore(
                     setInteger(MediaFormat.KEY_MAX_WIDTH, maxOf(config.width, 1920))
                     setInteger(MediaFormat.KEY_MAX_HEIGHT, maxOf(config.height, 1080))
                     setInteger(MediaFormat.KEY_PRIORITY, 0)
-                    // Nie gedrosselt (ein Arbeitstakt unter der Bildrate lässt 50-Bilder-Sender ruckeln): nur bei 4K mehr.
-                    if (config.width * config.height > 1920 * 1088) setFloat(MediaFormat.KEY_OPERATING_RATE, 60f)
+                    // Nie gedrosselt (ein Arbeitstakt unter der Bildrate lässt 50-Bilder-Sender ruckeln): nur bei 4K mehr –
+                    // und bei Decodern, die in dieser Sitzung ohne Angabe zu langsam geliefert haben (siehe checkThrottled).
+                    if (config.width * config.height > 1920 * 1088 || synchronized(throttledDecoders) { name in throttledDecoders })
+                        setFloat(MediaFormat.KEY_OPERATING_RATE, 60f)
                 }
             }
             // Versuche je Decoder: 8 Bit erst wie Media3, dann schlicht. 10 Bit erst schlicht, dann wie Media3, dann über
@@ -1855,6 +1860,7 @@ class DnaEngineCore(
                 videoHandler?.post { if (!released) guarded { render(index, ptsUs) } }
                 return
             }
+            lastEarlyUs = earlyUs
             if (firstFrameShown) noteLateness(earlyUs)
             val nowNs = System.nanoTime()
             // Anhaltend zu spät (über LATE_US, länger als eine Sekunde) oder weit zurück: Ton kurz anhalten statt Bilder
@@ -1966,7 +1972,40 @@ class DnaEngineCore(
                 speedMeasured = true
                 speedStartMs = now
                 speedStartPts = ptsUs
+                checkThrottled()
             }
+        }
+
+        /** Zuletzt gemessener Abstand eines Bildes zur Uhr (µs, negativ = zu spät). */
+        private var lastEarlyUs = 0L
+        private var slowSamples = 0
+        private var rateBoosted = false
+
+        /**
+         * Gedrosselter Decoder: Er liefert langsamer als Echtzeit, obwohl genug Bilder im Vorrat liegen, und das Bild hängt
+         * schon hinter der Uhr. Kurzbericht Fire TV 15.11.: 25-Bilder-Sender, der Decoder lieferte phasenweise genau 24
+         * Bilder/s (95–96 % Echtzeit), das Bild fiel in 5 s um 200 ms zurück, dann wurden 6 Bilder verworfen, alle 10 s
+         * von vorn – während er beim Verwerfen mühelos 120 % schaffte. Manche Geräte-Decoder takten ohne Angabe nach
+         * einer selbst angenommenen Bildrate: dann den Arbeitstakt ausdrücklich höher anfordern (wie Media3 bei bekannter
+         * Bildrate), einmal je Decoder, und für die Sitzung merken (der nächste startet gleich damit).
+         */
+        private fun checkThrottled() {
+            if (tunneled || !firstFrameShown || paused || buffering || catchUpHold) {
+                slowSamples = 0
+                return
+            }
+            val queued = synchronized(lock) { videoQueue.size }
+            val slow = decodeSpeed < THROTTLED_SPEED * playSpeed && lastEarlyUs < -THROTTLED_LATE_US && queued >= THROTTLED_MIN_QUEUE
+            slowSamples = if (slow) slowSamples + 1 else 0
+            if (slowSamples < 2 || rateBoosted) return
+            rateBoosted = true
+            val rate = if (streamFrameRate > 30.5f) 120f else 60f
+            val ok = runCatching {
+                codec.setParameters(android.os.Bundle().apply { putFloat(MediaFormat.KEY_OPERATING_RATE, rate) })
+            }.isSuccess
+            synchronized(throttledDecoders) { throttledDecoders += name }
+            DnaLog.w(TAG, "$name liefert nur ${(decodeSpeed * 100).toInt()} % Echtzeit bei $queued Bildern Vorrat (Bild ${-lastEarlyUs / 1000} ms zurück) – " +
+                (if (ok) "Arbeitstakt ${rate.toInt()} Bilder/s angefordert" else "Arbeitstakt lässt sich nicht ändern"))
         }
         private var maxBehindUs = 0L
 
@@ -1976,10 +2015,15 @@ class DnaEngineCore(
             if (-earlyUs > maxBehindUs) maxBehindUs = -earlyUs
             val now = SystemClock.elapsedRealtime()
             if (now - lateLogAt >= 5_000 && lateCount > 0) {
-                DnaLog.i(TAG, "Bild: im Mittel ${lateSumUs / lateCount / 1000} ms spät, gezeigt $renderedFrames, verworfen $droppedFrames" +
+                // Vorrat und Bildwechselrate dazu: Damit lässt sich aus dem Kurzbericht unterscheiden, ob der Decoder zu
+                // langsam ist (Vorrat voll), der Strom zu spät kommt (Vorrat leer) oder das Display nicht passt.
+                val period = VsyncSampler.periodNs
+                DnaLog.routine(TAG, "Bild: im Mittel ${lateSumUs / lateCount / 1000} ms spät, gezeigt $renderedFrames, verworfen $droppedFrames" +
                     (if (droppedLate + skippedToKey > 0) " (zu spät $droppedLate, bis Schlüsselbild $skippedToKey, am weitesten zurück ${maxBehindUs / 1000} ms)" else "") +
                     (if (droppedNonRef > 0) ", ohne Bezug ausgelassen $droppedNonRef" else "") +
-                    ", Decoder ${(decodeSpeed * 100).toInt()} % Echtzeit")
+                    ", Decoder ${(decodeSpeed * 100).toInt()} % Echtzeit, Vorrat ${synchronized(lock) { videoQueue.size }} Bilder" +
+                    (if (period > 0) ", Display ${"%.1f".format(java.util.Locale.GERMANY, 1e9 / period)} Hz" else "") +
+                    (if (playSpeed != 1f) ", Tempo ${(playSpeed * 100).toInt()} %" else ""))
                 droppedNonRef = 0
                 droppedLate = 0
                 skippedToKey = 0
@@ -2822,9 +2866,11 @@ class DnaEngineCore(
         @Volatile private var lastSpeed = 1f
 
         /** Aus dem letzten Wert weitergerechnet; null, wenn er älter als [maxAgeMs] ist. */
-        fun recentUs(maxAgeMs: Long = 250): Long? {
+        fun recentUs(maxAgeMs: Long = 250, stopped: Boolean = false): Long? {
             val us = lastUs
             if (us == Long.MIN_VALUE) return null
+            // Uhr steht: Der letzte Wert stimmt, egal wie alt.
+            if (stopped) return us
             val ageNs = System.nanoTime() - lastNanos
             if (ageNs > maxAgeMs * 1_000_000) return null
             return if (lastRunning) us + (ageNs / 1000 * lastSpeed).toLong() else us
@@ -3012,6 +3058,12 @@ class DnaEngineCore(
         private const val CAUGHT_UP_US = 40_000L
         /** Höchstens so viele Halte pro Minute (kommt das Bild dauerhaft nicht mit, hilft nur das Überspringen). */
         private const val CATCH_UP_HOLDS_PER_MINUTE = 3
+        /** Gedrosselter Decoder: langsamer als das, mindestens so weit zurück (µs) und so viele Bilder im Vorrat. */
+        private const val THROTTLED_SPEED = 0.985
+        private const val THROTTLED_LATE_US = 40_000L
+        private const val THROTTLED_MIN_QUEUE = 5
+        /** Decoder, die in dieser App-Sitzung ohne Arbeitstakt zu langsam geliefert haben. */
+        private val throttledDecoders = HashSet<String>()
         /** Halt nur, wenn der Decoder mindestens so schnell wie Echtzeit liefert (sonst Zeitlupe). */
         private const val CATCH_UP_MIN_SPEED = 0.97
         /** Langsamer Decoder: bis so spät (µs) wird ein dekodiertes Bild noch gezeigt statt verworfen. */

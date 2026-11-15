@@ -728,7 +728,8 @@ class PlayerActivity : ComponentActivity() {
                 framesAdvancing = false
                 lastPosition = -1
             }
-            if (displaySwitching()) {
+            // Fernseher aus: Die Wiedergabe ist absichtlich angehalten – nicht neu verbinden.
+            if (displaySwitching() || stoppedForTvOff) {
                 stalledSeconds = 0
                 continue
             }
@@ -5232,6 +5233,172 @@ class PlayerActivity : ComponentActivity() {
         container.scope.launch { container.settings.update { it.copy(audioMode = mode) } }
     }
 
+    // ---------------------------------------------------------------- Fernseher aus / niemand schaut mehr
+
+    /**
+     * Ein Stick weiß nicht, dass der Fernseher aus ist: Der Sender lief weiter, über Nacht 13 Stunden lang (Kurzbericht
+     * Fire TV 15.11.: 799 min, 2348 Hänger – die Tonausgabe nahm ohne Fernseher nichts mehr ab), belegte die einzige
+     * Verbindung beim Anbieter und verfälschte die Statistik. Zwei Wege, das zu merken:
+     * - das Gerät meldet „HDMI getrennt“ bzw. „Bildschirm aus“ (viele Fernseher trennen HDMI beim Ausschalten):
+     *   Live anhalten, beim Einschalten oder ersten Tastendruck weiter;
+     * - sonst: nach [IDLE_ASK_MS] Live ohne einen Tastendruck nachfragen, ohne Antwort nach [IDLE_GRACE_S] beenden.
+     */
+    private var stoppedForTvOff = false
+    private var hdmiPlugged: Boolean? = null
+    private var tvOffJob: Job? = null
+    private var idleJob: Job? = null
+    private var presenceReceiver: android.content.BroadcastReceiver? = null
+    private var lastKeyAt = SystemClock.elapsedRealtime()
+    private var idlePrompt = false
+    private var idleSwallowKey = 0
+
+    private fun presenceNote(text: String) {
+        statusHistory += "${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.GERMANY).format(java.util.Date())} $text"
+    }
+
+    private fun watchPresence() {
+        if (isPhoneDevice) return
+        lastKeyAt = SystemClock.elapsedRealtime()
+        if (presenceReceiver == null) {
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    when (intent.action) {
+                        android.media.AudioManager.ACTION_HDMI_AUDIO_PLUG ->
+                            onHdmiPlug(intent.getIntExtra(android.media.AudioManager.EXTRA_AUDIO_PLUG_STATE, 1) != 0)
+                        Intent.ACTION_SCREEN_OFF -> tvOff("Bildschirm aus")
+                        Intent.ACTION_SCREEN_ON -> tvOn("Bildschirm an")
+                    }
+                }
+            }
+            val filter = android.content.IntentFilter().apply {
+                addAction(android.media.AudioManager.ACTION_HDMI_AUDIO_PLUG)
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+            // Erster Aufruf kommt sofort mit dem jetzigen Stand (gemerkte Meldung): nur als Ausgangswert, ohne Folgen.
+            hdmiPlugged = null
+            runCatching {
+                androidx.core.content.ContextCompat.registerReceiver(this, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+                presenceReceiver = receiver
+            }
+        }
+        idleJob?.cancel()
+        idleJob = lifecycleScope.launch {
+            while (true) {
+                delay(60_000)
+                val watching = isLive && !castingRemote && !stoppedForTvOff && !inPip && player?.playWhenReady == true
+                if (!watching || SystemClock.elapsedRealtime() - lastKeyAt < IDLE_ASK_MS) continue
+                idlePrompt = true
+                var left = IDLE_GRACE_S
+                while (idlePrompt && left > 0) {
+                    message = "Schaust du noch? Eine Taste drücken – sonst endet die Wiedergabe in ${left / 60}:${"%02d".format(left % 60)}"
+                    delay(1_000)
+                    left--
+                }
+                if (!idlePrompt) continue
+                idlePrompt = false
+                message = null
+                presenceNote("${IDLE_ASK_MS / 3_600_000} h ohne Tastendruck, keine Antwort – Wiedergabe beendet")
+                player?.pause()
+                finish()
+                return@launch
+            }
+        }
+    }
+
+    private fun unwatchPresence() {
+        idleJob?.cancel()
+        idleJob = null
+        tvOffJob?.cancel()
+        tvOffJob = null
+        if (idlePrompt) {
+            idlePrompt = false
+            message = null
+        }
+        presenceReceiver?.let { runCatching { unregisterReceiver(it) } }
+        presenceReceiver = null
+        // Im Hintergrund hält onStop ohnehin an; onStart setzt neu an.
+        stoppedForTvOff = false
+    }
+
+    /** Jeder Tastendruck: jemand ist da. true = Taste verbraucht (sie hat nur die Nachfrage beantwortet bzw. geweckt). */
+    private fun notePresence(event: KeyEvent): Boolean {
+        lastKeyAt = SystemClock.elapsedRealtime()
+        val code = event.keyCode
+        if (event.action == KeyEvent.ACTION_DOWN && (idlePrompt || stoppedForTvOff)) {
+            idleSwallowKey = code
+            if (idlePrompt) {
+                idlePrompt = false
+                message = null
+            }
+            tvOn("Tastendruck")
+        }
+        if (idleSwallowKey != 0 && idleSwallowKey == code) {
+            if (event.action == KeyEvent.ACTION_UP) idleSwallowKey = 0
+            return true
+        }
+        return false
+    }
+
+    private fun onHdmiPlug(plugged: Boolean) {
+        val before = hdmiPlugged
+        hdmiPlugged = plugged
+        if (plugged) {
+            tvOffJob?.cancel()
+            tvOffJob = null
+            if (before == false) tvOn("HDMI wieder da")
+            return
+        }
+        // Nur ein beobachteter Wechsel zählt (nie der Ausgangswert), und nur ohne andere Tonausgabe: Ein Fernseher mit
+        // eingebautem Fire TV meldet so auch eine abgezogene Soundbar, und mit Kopfhörern läuft der Ton ohnehin woanders.
+        if (before != true || hasOtherAudioOutput()) return
+        tvOffJob?.cancel()
+        tvOffJob = lifecycleScope.launch {
+            // Ein Wechsel der Bildwiederholrate lässt HDMI kurz neu verbinden: abwarten und erneut prüfen.
+            delay(TV_OFF_GRACE_MS)
+            while (displaySwitching()) delay(1_000)
+            if (hdmiPlugged == false) tvOff("HDMI getrennt")
+        }
+    }
+
+    private fun hasOtherAudioOutput(): Boolean {
+        // Im Zweifel (Abfrage scheitert): andere Ausgabe annehmen, also nicht anhalten.
+        val audio = getSystemService(android.media.AudioManager::class.java) ?: return true
+        return runCatching {
+            audio.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).any {
+                it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES || it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET
+            }
+        }.getOrDefault(true)
+    }
+
+    private fun tvOff(reason: String) {
+        if (stoppedForTvOff || castingRemote || inPip) return
+        val p = player ?: return
+        stoppedForTvOff = true
+        presenceNote("Fernseher aus ($reason) – Wiedergabe angehalten")
+        if (isLive) {
+            recordWatch()
+            p.stop()
+        } else p.pause()
+    }
+
+    private fun tvOn(reason: String) {
+        if (!stoppedForTvOff) return
+        stoppedForTvOff = false
+        tvOffJob?.cancel()
+        tvOffJob = null
+        presenceNote("Fernseher wieder an ($reason)")
+        val p = player ?: return
+        // Filme bleiben angehalten (nichts verpassen); Live läuft wieder.
+        if (!isLive) return
+        watchStartedAt = SystemClock.elapsedRealtime()
+        watchErrorsAtStart = playerErrors
+        resetWatchStats()
+        streamGeneration++
+        restartStream()
+    }
+
     /**
      * Schlaf-Timer: nach [minutes] anhalten und den Player schließen. 0 = aus, [SLEEP_END] = am Ende der
      * laufenden Sendung bzw. des Films.
@@ -5672,6 +5839,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
+        if (notePresence(event)) return true
         // Fernbedienung: Lautstärketasten des Handys regeln den Fernseher (DLNA).
         if (castTarget != null && remoteHasVolume && (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN)) {
             if (event.action == KeyEvent.ACTION_DOWN) remoteVolume(if (code == KeyEvent.KEYCODE_VOLUME_UP) 2 else -2)
@@ -5852,6 +6020,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        watchPresence()
         // Läuft es auf dem Fernseher, bleibt das Handy die Fernbedienung (kein Neustart hier).
         if (castingRemote) return
         player?.let { p ->
@@ -5866,6 +6035,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        unwatchPresence()
         // Fire-TV-Startseite: Weiterschauen mit dem neuen Stand.
         container.scope.launch {
             delay(1_000)
@@ -5878,8 +6048,13 @@ class PlayerActivity : ComponentActivity() {
         // Zusammenstellen hier, Schreiben abseits der Oberfläche (die Datei schreiben kostete beim Schließen Zeit).
         val sessionTitle = if (isLive) playing?.name.orEmpty() else vodTitle
         val sessionLines = statusHistory.toList() + listOf("Engine: $engineLabel" + ((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.lastInfo?.takeIf { it.isNotEmpty() }?.let { " (zuletzt: $it)" } ?: ""), "Technik: $stats", "Abbrüche: ${dropInfo.ifEmpty { "keine" }}") +
+                // Decoder, Zähler und Zustand ausdrücklich: Im Protokoll darunter stehen sie nur am Anfang der Wiedergabe.
+                listOfNotNull((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.let {
+                    "Bild: Decoder ${it.videoDecoderName ?: "?"}, gezeigt ${it.renderedFrames}, verworfen ${it.droppedFrames}, Decoder ${it.decoderSpeedPercent} % Echtzeit, " +
+                        "Display ${frameRateMatcher.currentRefreshRate()} Hz · ${runCatching { it.engineState() }.getOrDefault("")}"
+                }) +
                 // Was die Engine selbst gemacht hat (Decoder, HEVC-Kopf, erstes Bild, Fehler, Neuverbinden).
-                listOf("Engine-Protokoll:") + de.ayutv.player.dna.engine.DnaEngineCore.journal().takeLast(100).map { "  $it" }
+                listOf("Engine-Protokoll:") + de.ayutv.player.dna.engine.DnaEngineCore.journal().takeLast(190).map { "  $it" }
         val appContext = applicationContext
         container.scope.launch(Dispatchers.IO) { de.ayutv.data.Diagnostics.savePlayerSession(appContext, sessionTitle, sessionLines) }
         // Bild-in-Bild-Fenster geschlossen: Player beenden statt unsichtbar im Hintergrund zu bleiben.
@@ -6063,6 +6238,12 @@ class PlayerActivity : ComponentActivity() {
         private const val SWIPE_SEEK_MS = 120_000f
         /** Schlaf-Timer bis zum Ende der Sendung / des Films. */
         const val SLEEP_END = -1
+        /** Live so lange ohne Tastendruck: nachfragen, ob noch jemand schaut. */
+        private const val IDLE_ASK_MS = 4 * 3_600_000L
+        /** So lange (s) bleibt Zeit, die Nachfrage mit einer Taste zu beantworten. */
+        private const val IDLE_GRACE_S = 300
+        /** HDMI getrennt: so lange warten, bevor Live anhält (HDMI verbindet beim Moduswechsel kurz neu). */
+        private const val TV_OFF_GRACE_MS = 20_000L
         /** Näher als das am Live-Bild gilt als live. */
         private const val LIVE_EDGE_MS = 4_000L
         /** Mindestens so viel freier Speicher, sonst kein Zeitversatz. */

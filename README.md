@@ -35,6 +35,7 @@ DnA-TV ist ein reiner Player. Sender, Filme und Serien kommen aus deinem eigenen
   Alles Geladene und Übersetzte wird gespeichert; mehrere Sprachen hängen gleichzeitig am Film.
 - **Ton- und Untertitelmenü (☰-Taste):** Audiospuren mit Sprache und Format (Dolby Atmos, Dolby Digital Plus, DTS, 5.1), Untertitelspuren, Online-Suche. Bei Live TV zusätzlich Favorit setzen.
 - **Stabilität:** Ein Watchdog erkennt eingefrorene Streams (Dauer-Puffern, stehendes Bild) und verbindet automatisch neu. Stürzt der Decoder bei aktivem Tunneling ab, wird Tunneling für diesen Stream abgeschaltet und neu gestartet. Kurzer Lese-Timeout (12 s), damit tote Verbindungen schnell auffallen. Bei Fehlern gibt es bis zu drei Wiederholungen, HLS ohne Endung wird automatisch erkannt.
+- **Fernseher aus, Stream aus:** Meldet das Gerät „HDMI getrennt“ oder „Bildschirm aus“, hält Live TV an und läuft beim Einschalten weiter. Nach 4 Stunden Live TV ohne Tastendruck fragt DnA-TV nach („Schaust du noch?“) und beendet die Wiedergabe ohne Antwort nach 5 Minuten – so läuft kein Sender die Nacht durch und belegt die Verbindung beim Anbieter.
 - **Filme und Serien:** Kategorien, Poster-Raster, Staffeln und Episoden (Xtream), Fortsetzen an der letzten Position
 - **Automatische Aktualisierung:** Playlists alle 12 Stunden, EPG alle 8 Stunden
 - **Catch-up und Timeshift:** vergangene Sendungen aus dem Archiv des Anbieters (Xtream `tv_archive`, M3U `catchup`), laufende Sendung von Anfang, Live anhalten und zeitversetzt weiterschauen
