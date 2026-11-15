@@ -777,6 +777,11 @@ private fun rememberLivePreview(channel: ChannelEntity?): LivePreview {
         }
         if (preview.key == channel.key) return@LaunchedEffect
         delay(1_500)
+        // Inzwischen ein Sender gestartet (Player vorn)? Bei angehaltener Oberfläche wird dieser Block nicht neu
+        // gestartet, er lief einfach weiter: Die Vorschau startete hinter dem Player und nahm Anbietern mit nur einer
+        // Verbindung diese weg (Neuverbinden, Abbrüche) und dem Decoder die halbe Leistung (Rundgang: zweiter Strom
+        // neben dem Player).
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return@LaunchedEffect
         preview.agent = channel.userAgent ?: settings?.userAgent ?: de.ayutv.data.AppSettings().userAgent
         val player = preview.player ?: de.ayutv.player.dna.engine.DnaEnginePlayer.preview(container.http) { preview.agent }.also { created ->
             created.addListener(object : androidx.media3.common.Player.Listener {
@@ -784,6 +789,10 @@ private fun rememberLivePreview(channel: ChannelEntity?): LivePreview {
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) { preview.key = null }
             })
             preview.player = created
+        }
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            preview.stop()
+            return@LaunchedEffect
         }
         player.setMediaItem(androidx.media3.common.MediaItem.fromUri(channel.url))
         player.prepare()
