@@ -1900,7 +1900,11 @@ class DnaEngineCore(
                     codec.releaseOutputBuffer(index, false)
                 }
                 // Zu spät, aber gerade erst ein Bild gezeigt: verwerfen. Sonst lieber spät zeigen als stehen bleiben.
-                firstFrameShown && earlyUs < -LATE_US && nowNs - lastRenderNs < MIN_FRAME_GAP_NS -> {
+                // Ausnahme: Der Decoder selbst schafft keine Echtzeit – dann ist jedes dekodierte Bild teuer erkauft;
+                // bis SLOW_DECODER_SHOW_US zu spät zeigen statt wegwerfen (flüssiger, der Rückstand baut sich über
+                // ausgelassene Bilder ohne Bezug bzw. den Sprung zum Schlüsselbild ab).
+                firstFrameShown && earlyUs < -LATE_US && nowNs - lastRenderNs < MIN_FRAME_GAP_NS &&
+                    !(speedMeasured && decodeSpeed < CATCH_UP_MIN_SPEED && earlyUs > -SLOW_DECODER_SHOW_US) -> {
                     droppedFrames++
                     droppedLate++
                     codec.releaseOutputBuffer(index, false)
@@ -3010,6 +3014,8 @@ class DnaEngineCore(
         private const val CATCH_UP_HOLDS_PER_MINUTE = 3
         /** Halt nur, wenn der Decoder mindestens so schnell wie Echtzeit liefert (sonst Zeitlupe). */
         private const val CATCH_UP_MIN_SPEED = 0.97
+        /** Langsamer Decoder: bis so spät (µs) wird ein dekodiertes Bild noch gezeigt statt verworfen. */
+        private const val SLOW_DECODER_SHOW_US = 300_000L
         /** So lange (ns) dürfen ausgelassene Bilder ohne Bezug den Rückstand abbauen, bevor zum Schlüsselbild gesprungen wird. */
         private const val HURRY_BEFORE_SKIP_NS = 3_000_000_000L
         /** Früher als das wird ein Bild zurückgehalten (sonst mit Zeitpunkt an die Bildfläche gegeben). */
