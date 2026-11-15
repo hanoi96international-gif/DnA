@@ -1468,8 +1468,16 @@ class DeviceTourTest {
                 assertTrue("Sender startet nicht auf dem Fernseher", started)
                 assertTrue("Fremder Sender startet nicht", foreignPlays)
             } finally {
-                (container.foreground?.get() as? PlayerActivity)?.let { activity -> activity.runOnUiThread { activity.finish() } }
                 container.remote.stop()
+                // Alle vom „Fernseher“ gestarteten Player wirklich beenden, bevor der nächste Abschnitt misst: Ein noch
+                // laufender (oder durch CLEAR_TOP neu angelegter) Player spielte sonst neben dem nächsten weiter – zwei
+                // Ströme teilten sich den Decoder des Emulators (Rundgang 15.11.: HLS-Strom neben dna_engine).
+                waitFor(10_000) {
+                    val activity = container.foreground?.get() as? PlayerActivity
+                    activity?.runOnUiThread { activity.finish() }
+                    activity == null
+                }
+                Thread.sleep(1_500)
             }
         }
 
