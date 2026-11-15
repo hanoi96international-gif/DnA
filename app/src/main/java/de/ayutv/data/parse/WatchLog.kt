@@ -83,6 +83,28 @@ object WatchLog {
     fun append(lines: List<String>, entry: Entry, now: Long): List<String> =
         (lines.mapNotNull(::decode) + entry).filter { now - it.at <= KEEP_MS }.takeLast(MAX).map(::encode)
 
+    /**
+     * Letzte Wiedergabe für den Kurzbericht kürzen: Kopf (Titel, Meldungen, Engine, Technik, Abbrüche) und aus dem
+     * Engine-Protokoll alles Besondere (Decoder, Start, Warnungen), von den regelmäßigen Bild-Zeilen nur die letzten
+     * [routine]. Früher standen dort schlicht die letzten 40 Zeilen – nach ein paar Minuten nur noch Bild-Zeilen, und
+     * welcher Sender mit welchem Decoder lief, fehlte.
+     */
+    fun sessionExcerpt(text: String, head: Int = 14, other: Int = 30, routine: Int = 12): String {
+        val lines = text.lines().filter { it.isNotBlank() }
+        val split = lines.indexOfFirst { it.trim() == "Engine-Protokoll:" }
+        if (split < 0) return lines.takeLast(head + other + routine).joinToString("\n")
+        val top = lines.take(split)
+        val journal = lines.drop(split + 1)
+        fun isRoutine(line: String) = " Bild: im Mittel " in line
+        val keepRoutine = journal.indices.filter { isRoutine(journal[it]) }.takeLast(routine)
+        val keepOther = journal.indices.filter { !isRoutine(journal[it]) }.takeLast(other)
+        val kept = (keepRoutine + keepOther).sorted()
+        val skipped = journal.size - kept.size
+        return (top.take(1) + top.drop(1).takeLast(head - 1) +
+            listOf("Engine-Protokoll" + (if (skipped > 0) " (gekürzt, $skipped Zeilen ausgelassen):" else ":")) +
+            kept.map { journal[it] }).joinToString("\n")
+    }
+
     /** 25/50 fps auf einem 60-Hz-Bild: Jedes fünfte Bild steht doppelt so lange, Schwenks laufen ungleichmäßig. */
     fun cadenceMismatch(e: Entry): Boolean {
         val pal = e.fps in 24.5f..25.5f || e.fps in 49.5f..50.5f
