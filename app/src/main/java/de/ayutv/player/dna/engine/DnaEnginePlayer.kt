@@ -216,6 +216,7 @@ class DnaEnginePlayer(
 
     val droppedFrames: Int get() = core.droppedFrames
     val renderedFrames: Int get() = core.renderedFrames
+    val decoderSpeedPercent: Int get() = core.decoderSpeedPercent
     /** Bildrate des Stroms aus den Zeitstempeln (0 = noch unbekannt). */
     val streamFrameRate: Float get() = core.streamFrameRate
     /** Zustand der Engine für Protokoll und Tests (Vorrat, Uhr, Ton). */

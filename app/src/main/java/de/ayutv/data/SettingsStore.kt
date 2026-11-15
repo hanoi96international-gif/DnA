@@ -187,6 +187,8 @@ data class AppSettings(
     val calmBackground: Boolean = false,
     /** Ton-Bild-Abgleich in ms (positiv: Bild früher / Ton später), je Gerät – Beamer und Fernseher verzögern das Bild. */
     val avSyncMs: Int = 0,
+    /** HDR10 im eigenen Software-Decoder (Handy): im HDR-Testbild gewählte Ausgabe, leer = nach SDR umrechnen. */
+    val hdrVariant: String = "",
     val audioMode: AudioMode = AudioMode.NORMAL,
     /** Untertitel bei OpenSubtitles suchen, wenn der Film selbst keine passenden hat. */
     val onlineSubtitles: Boolean = true,
@@ -311,6 +313,7 @@ class SettingsStore(private val context: Context) {
         val screenMargin = stringPreferencesKey("screen_margin")
         val calmBackground = booleanPreferencesKey("calm_background")
         val avSyncMs = intPreferencesKey("av_sync_ms")
+        val hdrVariant = stringPreferencesKey("hdr_variant")
         val audioMode = stringPreferencesKey("audio_mode")
         val osKey = stringPreferencesKey("opensubtitles_key")
         val osOn = booleanPreferencesKey("opensubtitles_on")
@@ -463,6 +466,7 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.screenMargin] = next.screenMargin.name
             prefs[Keys.calmBackground] = next.calmBackground
             prefs[Keys.avSyncMs] = next.avSyncMs.coerceIn(AV_SYNC_MIN_MS, AV_SYNC_MAX_MS)
+            prefs[Keys.hdrVariant] = next.hdrVariant
             prefs[Keys.audioMode] = next.audioMode.name
             prefs[Keys.osKey] = next.openSubtitlesKey.trim()
             prefs[Keys.osOn] = next.onlineSubtitles
@@ -537,6 +541,7 @@ class SettingsStore(private val context: Context) {
         screenMargin = enumOrDefault(this[Keys.screenMargin], ScreenMargin.NONE),
         calmBackground = this[Keys.calmBackground] ?: false,
         avSyncMs = (this[Keys.avSyncMs] ?: 0).coerceIn(AV_SYNC_MIN_MS, AV_SYNC_MAX_MS),
+        hdrVariant = this[Keys.hdrVariant].orEmpty(),
         audioMode = enumOrDefault(this[Keys.audioMode], AudioMode.NORMAL),
         openSubtitlesKey = this[Keys.osKey].orEmpty(),
         onlineSubtitles = this[Keys.osOn] ?: true,

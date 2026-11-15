@@ -22,7 +22,7 @@ import java.nio.FloatBuffer
  * Über EGL statt direkt in die Fläche schreiben: EGL gibt die Fläche beim Freigeben wieder ab, danach kann ein
  * Hardware-Decoder sie wieder nutzen (nächster Sender). Alle Aufrufe auf einem Thread (dem des Software-Decoders).
  */
-internal class GlYuvRenderer(output: Surface, val hdr: Boolean = false) {
+internal class GlYuvRenderer(output: Surface, val hdr: Boolean = false, private val variant: HdrVariant = HdrVariant.PQ10) {
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var context: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
@@ -55,8 +55,14 @@ internal class GlYuvRenderer(output: Surface, val hdr: Boolean = false) {
         check(EGL14.eglInitialize(display, version, 0, version, 1)) { "eglInitialize" }
         // HDR: 10 Bit je Farbe, OpenGL ES 3 (Halbfließkomma-Texturen) und eine Fläche in BT.2020/PQ – das System gibt
         // sie dann als HDR10 an das Display. Sonst 8 Bit SDR wie bisher.
-        if (hdr) check(hasHdrExtension(display)) { "EGL ohne BT.2020/PQ" }
-        val attribs = if (hdr) intArrayOf(
+        if (hdr) check(supports(display, variant)) { "EGL ohne ${variant.name}" }
+        val attribs = if (hdr && variant.float16) intArrayOf(
+            // Halbfließkomma-Fläche (RGBA 16F): manche Grafik/Displays geben 10-Bit-Flächen falsch weiter.
+            EGL_COLOR_COMPONENT_TYPE_EXT, EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT,
+            EGL14.EGL_RED_SIZE, 16, EGL14.EGL_GREEN_SIZE, 16, EGL14.EGL_BLUE_SIZE, 16, EGL14.EGL_ALPHA_SIZE, 16,
+            EGL14.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
+            EGL14.EGL_NONE,
+        ) else if (hdr) intArrayOf(
             EGL14.EGL_RED_SIZE, 10, EGL14.EGL_GREEN_SIZE, 10, EGL14.EGL_BLUE_SIZE, 10, EGL14.EGL_ALPHA_SIZE, 2,
             EGL14.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
             EGL14.EGL_NONE,
@@ -71,7 +77,9 @@ internal class GlYuvRenderer(output: Surface, val hdr: Boolean = false) {
         val config = configs[0]!!
         context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, if (hdr) 3 else 2, EGL14.EGL_NONE), 0)
         check(context != EGL14.EGL_NO_CONTEXT) { "eglCreateContext" }
-        val surfaceAttribs = if (hdr) intArrayOf(EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_BT2020_PQ_EXT, EGL14.EGL_NONE) else intArrayOf(EGL14.EGL_NONE)
+        val surfaceAttribs = if (hdr) intArrayOf(
+            EGL_GL_COLORSPACE_KHR, if (variant.linear) EGL_GL_COLORSPACE_BT2020_LINEAR_EXT else EGL_GL_COLORSPACE_BT2020_PQ_EXT, EGL14.EGL_NONE,
+        ) else intArrayOf(EGL14.EGL_NONE)
         eglSurface = EGL14.eglCreateWindowSurface(display, config, output, surfaceAttribs, 0)
         check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface ${EGL14.eglGetError()}" }
         check(EGL14.eglMakeCurrent(display, eglSurface, eglSurface, context)) { "eglMakeCurrent" }
@@ -133,7 +141,7 @@ internal class GlYuvRenderer(output: Surface, val hdr: Boolean = false) {
         // 0 = SDR, 1 = PQ (HDR10) → SDR, 2 = BT.2020-Farben (HLG/SDR in BT.2020) → BT.709, 3 = HDR10 unverändert
         // (Fläche ist BT.2020/PQ, das Display zeigt echtes HDR).
         val mode = when {
-            hdr && frame.transfer == TRC_PQ -> 3
+            hdr && frame.transfer == TRC_PQ -> if (variant.linear) 4 else 3
             frame.transfer == TRC_PQ -> 1
             frame.colorSpace == CS_BT2020_NCL || frame.colorSpace == CS_BT2020_CL || frame.transfer == TRC_HLG -> 2
             else -> 0
@@ -210,18 +218,28 @@ internal class GlYuvRenderer(output: Surface, val hdr: Boolean = false) {
         private const val EGL_OPENGL_ES3_BIT = 0x40
         private const val EGL_GL_COLORSPACE_KHR = 0x309D
         private const val EGL_GL_COLORSPACE_BT2020_PQ_EXT = 0x3340
+        private const val EGL_GL_COLORSPACE_BT2020_LINEAR_EXT = 0x333F
+        private const val EGL_COLOR_COMPONENT_TYPE_EXT = 0x3339
+        private const val EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT = 0x333B
 
-        private fun hasHdrExtension(display: EGLDisplay): Boolean =
-            EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS)?.contains("EGL_EXT_gl_colorspace_bt2020_pq") == true
+        private fun supports(display: EGLDisplay, variant: HdrVariant): Boolean {
+            val ext = EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS).orEmpty()
+            val space = if (variant.linear) "EGL_EXT_gl_colorspace_bt2020_linear" else "EGL_EXT_gl_colorspace_bt2020_pq"
+            return space in ext && (!variant.float16 || "EGL_EXT_pixel_format_float" in ext)
+        }
 
-        /** Kann die Grafik eine HDR10-Fläche (BT.2020/PQ) anlegen? Einmal geprüft. */
-        val hdrAvailable: Boolean by lazy {
+        /** Welche HDR-Ausgaben die Grafik anlegen kann. Einmal geprüft. */
+        val availableVariants: List<HdrVariant> by lazy {
             runCatching {
                 val d = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
                 val v = IntArray(2)
-                d != EGL14.EGL_NO_DISPLAY && EGL14.eglInitialize(d, v, 0, v, 1) && hasHdrExtension(d)
-            }.getOrDefault(false)
+                if (d == EGL14.EGL_NO_DISPLAY || !EGL14.eglInitialize(d, v, 0, v, 1)) emptyList()
+                else HdrVariant.entries.filter { supports(d, it) }
+            }.getOrDefault(emptyList())
         }
+
+        /** Kann die Grafik eine HDR10-Fläche (BT.2020/PQ) anlegen? */
+        val hdrAvailable: Boolean get() = availableVariants.isNotEmpty()
 
         // AVColorSpace / AVColorTransferCharacteristic (FFmpeg).
         private const val CS_BT709 = 1
@@ -275,12 +293,25 @@ void main() {
         rgb = pow(clamp(l, 0.0, 1.0), vec3(1.0 / 2.2));
     } else if (uMode == 3) {
         // HDR10: Werte sind schon PQ-kodiert in BT.2020 – genau so auf die PQ-Fläche.
+    } else if (uMode == 4) {
+        // Lineare BT.2020-Fläche: Licht relativ zum SDR-Weiß (203 nits = 1.0), Spitzen darüber.
+        rgb = pqToLinear(rgb) * (10000.0 / 203.0);
     } else if (uMode == 2) {
         vec3 l = pow(rgb, vec3(2.2));
         rgb = pow(clamp(TO709 * l, 0.0, 1.0), vec3(1.0 / 2.2));
     }
-    gl_FragColor = vec4(rgb, 1.0);
+    gl_FragColor = vec4(uMode == 4 ? rgb : clamp(rgb, 0.0, 1.0), 1.0);
 }
 """
     }
+}
+
+/**
+ * Wie der eigene Software-Decoder HDR10 an das Display gibt. Geräte setzen die Flächen unterschiedlich um (Xiaomi 11T:
+ * 10-Bit-PQ-Fläche rotstichig und zu dunkel) – im HDR-Testbild wählt man die, die richtig aussieht.
+ */
+enum class HdrVariant(val label: String, val float16: Boolean, val linear: Boolean) {
+    PQ10("A: 10 Bit, PQ", false, false),
+    PQ16("B: 16 Bit, PQ", true, false),
+    LINEAR16("C: 16 Bit, linear", true, true),
 }

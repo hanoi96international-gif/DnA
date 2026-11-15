@@ -404,6 +404,8 @@ class PlayerActivity : ComponentActivity() {
             loudnessLevel = settings.loudnessLevel
             avSyncMs = settings.avSyncMs
             de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = settings.avSyncMs * 1000L
+            de.ayutv.player.dna.engine.DnaEngineCore.hdrVariant =
+                de.ayutv.player.dna.engine.HdrVariant.entries.firstOrNull { it.name == settings.hdrVariant }
             textDisabled = vod != null && !settings.subtitlesAutoOn
             installPlayer(settings.asyncDecoding || phoneAsyncDefault(), settings.audioOutput == AudioOutput.PCM)
             startWatchdog()
