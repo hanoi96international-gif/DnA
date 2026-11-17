@@ -1871,7 +1871,7 @@ class DnaEngineCore(
                     if (!catchUpHold && (earlyUs < -CATCH_UP_US || nowNs - lateSinceNs > LATE_SUSTAINED_NS)) {
                         // Halt nicht möglich (Decoder zu langsam): H.264 – Bilder ohne Bezug gar nicht erst dekodieren.
                         // Ohne Messung (gerade gestartet) kein Halt: Ob der Decoder Echtzeit schafft, ist noch offen.
-                        if (!startCatchUpHold(-earlyUs, if (speedMeasured) decodeSpeed else 0.0) && h264 && !hurryInput) {
+                        if (!startCatchUpHold(-earlyUs, if (speedMeasured && !hurryInput) decodeSpeed else 0.0) && h264 && !hurryInput) {
                             hurryInput = true
                             hurrySinceNs = nowNs
                             DnaLog.w(TAG, "$name schafft nur ${(decodeSpeed * 100).toInt()} % Echtzeit – lasse Bilder ohne Bezug aus")
@@ -1966,7 +1966,9 @@ class DnaEngineCore(
             // beginnen, sonst wirkt der Decoder nach jedem Puffern „langsam“.
             val gap = now - lastSpeedNoteMs
             lastSpeedNoteMs = now
-            if (paused || buffering || catchUpHold || gap > 500) {
+            // Ebenso, solange Bilder ohne Bezug ausgelassen werden: Die Zeitstempel springen dann über die ausgelassenen
+            // Bilder, der Decoder wirkte schneller, als er ist (Rundgang: 141 % gemessen bei tatsächlich 56 %).
+            if (paused || buffering || catchUpHold || hurryInput || gap > 500) {
                 speedStartMs = 0L
                 return
             }
