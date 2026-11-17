@@ -74,7 +74,21 @@ class PhoneTest {
             find(text)?.let { return it }
             Thread.sleep(300)
         }
-        error("„$text“ nicht auf dem Bildschirm")
+        error("„$text“ nicht auf dem Bildschirm – zu sehen: ${visibleTexts()}")
+    }
+
+    /** Was gerade zu sehen ist (für die Fehlersuche: Bildschirmfotos des Emulators sind nicht immer erreichbar). */
+    private fun visibleTexts(): String {
+        val root = automation.rootInActiveWindow ?: return "kein Fenster"
+        val out = ArrayList<String>()
+        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+        while (queue.isNotEmpty() && out.size < 25) {
+            val node = queue.removeFirst()
+            val label = (node.text ?: node.contentDescription)?.toString()?.trim().orEmpty()
+            if (label.isNotEmpty() && node.isVisibleToUser) out += label.take(30)
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return "${root.packageName}: " + out.joinToString(" | ")
     }
 
     /** Wie ein Finger: Tippen in die Mitte des Elements. */
@@ -112,6 +126,11 @@ class PhoneTest {
             }
             section("live_tippen") {
                 tap("Live TV")
+                // Kam der Tipp nicht an (Emulator unter Last), einmal nachtippen – und festhalten, was zu sehen war.
+                if (runCatching { waitFor(channels.first().name, 8_000) }.isFailure) {
+                    log("live_tippen: erster Tipp ohne Wirkung – zu sehen: ${visibleTexts()}")
+                    tap("Live TV")
+                }
                 waitFor(channels.first().name)
                 shot("phone_live_portrait")
             }

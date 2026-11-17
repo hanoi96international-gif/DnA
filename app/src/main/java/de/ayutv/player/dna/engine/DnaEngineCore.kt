@@ -1871,7 +1871,7 @@ class DnaEngineCore(
                     if (!catchUpHold && (earlyUs < -CATCH_UP_US || nowNs - lateSinceNs > LATE_SUSTAINED_NS)) {
                         // Halt nicht möglich (Decoder zu langsam): H.264 – Bilder ohne Bezug gar nicht erst dekodieren.
                         // Ohne Messung (gerade gestartet) kein Halt: Ob der Decoder Echtzeit schafft, ist noch offen.
-                        if (!startCatchUpHold(-earlyUs, if (speedMeasured) decodeSpeed else 0.0) && h264 && !hurryInput) {
+                        if (!startCatchUpHold(-earlyUs, if (speedMeasured && !hurryInput) decodeSpeed else 0.0) && h264 && !hurryInput) {
                             hurryInput = true
                             hurrySinceNs = nowNs
                             DnaLog.w(TAG, "$name schafft nur ${(decodeSpeed * 100).toInt()} % Echtzeit – lasse Bilder ohne Bezug aus")
@@ -1906,11 +1906,9 @@ class DnaEngineCore(
                     codec.releaseOutputBuffer(index, false)
                 }
                 // Zu spät, aber gerade erst ein Bild gezeigt: verwerfen. Sonst lieber spät zeigen als stehen bleiben.
-                // Ausnahme: Der Decoder selbst schafft keine Echtzeit – dann ist jedes dekodierte Bild teuer erkauft;
-                // bis SLOW_DECODER_SHOW_US zu spät zeigen statt wegwerfen (flüssiger, der Rückstand baut sich über
-                // ausgelassene Bilder ohne Bezug bzw. den Sprung zum Schlüsselbild ab).
-                firstFrameShown && earlyUs < -LATE_US && nowNs - lastRenderNs < MIN_FRAME_GAP_NS &&
-                    !(speedMeasured && decodeSpeed < CATCH_UP_MIN_SPEED && earlyUs > -SLOW_DECODER_SHOW_US) -> {
+                // (0.61.26 zeigte bei „langsamem“ Decoder Bilder bis 0,3 s zu spät: Der Fire-TV-Decoder lieferte zeitweise
+                // 95 % Echtzeit und galt damit als langsam – Bild lief dauerhaft bis 0,3 s hinter dem Ton. Wieder entfernt.)
+                firstFrameShown && earlyUs < -LATE_US && nowNs - lastRenderNs < MIN_FRAME_GAP_NS -> {
                     droppedFrames++
                     droppedLate++
                     codec.releaseOutputBuffer(index, false)
@@ -1960,9 +1958,20 @@ class DnaEngineCore(
         private var speedMeasured = false
         private var speedStartMs = 0L
         private var speedStartPts = 0L
+        private var lastSpeedNoteMs = 0L
 
         private fun noteDecodeSpeed(ptsUs: Long) {
             val now = SystemClock.elapsedRealtime()
+            // Angehalten, Puffern oder Halt zum Aufholen: Die Zeit dazwischen ist keine Decoder-Zeit – Fenster neu
+            // beginnen, sonst wirkt der Decoder nach jedem Puffern „langsam“.
+            val gap = now - lastSpeedNoteMs
+            lastSpeedNoteMs = now
+            // Ebenso, solange Bilder ohne Bezug ausgelassen werden: Die Zeitstempel springen dann über die ausgelassenen
+            // Bilder, der Decoder wirkte schneller, als er ist (Rundgang: 141 % gemessen bei tatsächlich 56 %).
+            if (paused || buffering || catchUpHold || hurryInput || gap > 500) {
+                speedStartMs = 0L
+                return
+            }
             if (speedStartMs == 0L || ptsUs < speedStartPts) {
                 speedStartMs = now
                 speedStartPts = ptsUs
@@ -3066,8 +3075,6 @@ class DnaEngineCore(
         private val throttledDecoders = HashSet<String>()
         /** Halt nur, wenn der Decoder mindestens so schnell wie Echtzeit liefert (sonst Zeitlupe). */
         private const val CATCH_UP_MIN_SPEED = 0.97
-        /** Langsamer Decoder: bis so spät (µs) wird ein dekodiertes Bild noch gezeigt statt verworfen. */
-        private const val SLOW_DECODER_SHOW_US = 300_000L
         /** So lange (ns) dürfen ausgelassene Bilder ohne Bezug den Rückstand abbauen, bevor zum Schlüsselbild gesprungen wird. */
         private const val HURRY_BEFORE_SKIP_NS = 3_000_000_000L
         /** Früher als das wird ein Bild zurückgehalten (sonst mit Zeitpunkt an die Bildfläche gegeben). */
