@@ -33,7 +33,7 @@ object Diagnostics {
     /** Letzte Wiedergabe für den nächsten Bericht merken (Statusmeldungen, Technik, Abbrüche). */
     fun savePlayerSession(context: Context, title: String, lines: List<String>) {
         val time = SimpleDateFormat("dd.MM. HH:mm", Locale.GERMANY).format(Date())
-        runCatching { File(context.filesDir, PLAYER_FILE).writeText("$time · $title\n" + lines.takeLast(200).joinToString("\n")) }
+        runCatching { File(context.filesDir, PLAYER_FILE).writeText("$time · $title\n" + lines.takeLast(280).joinToString("\n")) }
     }
 
     /** Letzte Übertragung zum Fernseher (LG/DLNA): Ablauf, Antworten des Fernsehers, Stand der Weiterleitung. */
@@ -107,6 +107,9 @@ object Diagnostics {
             out.append("Vorkompiliert (Baseline-Profil): " + when {
                 status.isCompiledWithProfile -> "ja"
                 status.hasProfileEnqueuedForCompilation() -> "noch nicht – vorgemerkt, das System übersetzt beim nächsten Ruhezustand"
+                // Android 11 kann es nicht melden (die Bibliothek fragt dort bewusst nicht ab): kein „nein“ daraus machen.
+                // (262144 = RESULT_CODE_ERROR_UNSUPPORTED_API_VERSION)
+                status.profileInstallResultCode == 262144 -> "auf diesem Android nicht feststellbar"
                 else -> "nein (Code ${status.profileInstallResultCode})"
             } + "\n")
         }
@@ -203,7 +206,7 @@ object Diagnostics {
             out.append(if (short) text.take(2_000) else text).append('\n')
         }
         file(CAST_FILE)?.let { section("Letzte Übertragung"); out.append(it).append('\n') }
-        file(PLAYER_FILE)?.let { section("Letzte Wiedergabe"); out.append(if (short) it.lines().takeLast(40).joinToString("\n") else it).append('\n') }
+        file(PLAYER_FILE)?.let { section("Letzte Wiedergabe"); out.append(if (short) de.ayutv.data.parse.WatchLog.sessionExcerpt(it) else it).append('\n') }
 
         if (!short) {
             section("Protokoll")
