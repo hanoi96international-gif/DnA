@@ -346,7 +346,12 @@ class DnaEngineCore(
     private fun startCatchUpHold(behindUs: Long, decodeSpeed: Double): Boolean {
         // Nur, wenn der Decoder an sich Echtzeit schafft (nur kurz zurückgefallen): Schafft er dauerhaft weniger,
         // liefe das Bild sonst in Zeitlupe (Rundgang: 31 von 50 Bildern/s, Uhr in 5 s nur 2,9 s weiter).
-        if (catchUpHold || paused || buffering || !audioStarted || behindUs > CATCH_UP_HOLD_MAX_US || decodeSpeed < CATCH_UP_MIN_SPEED) return false
+        // Kleiner Rückstand (bis SHORT_HOLD_MAX_US): immer – eine kurze Tonpause bringt Bild und Ton sofort zusammen, auch
+        // wenn der Decoder knapp unter Echtzeit liefert (Rundgang 18.11. und Fire TV 15.11.: Decoder 93–96 %, Bild
+        // dauerhaft ~150 ms hinter dem Ton, laufend verworfene Bilder). Das Auslassen von Bildern ohne Bezug hält es danach.
+        val shortHold = behindUs <= SHORT_HOLD_MAX_US
+        if (catchUpHold || paused || buffering || !audioStarted || behindUs > CATCH_UP_HOLD_MAX_US ||
+            (!shortHold && decodeSpeed < CATCH_UP_MIN_SPEED)) return false
         val now = SystemClock.elapsedRealtime()
         while (catchUpHolds.isNotEmpty() && now - catchUpHolds.first() > 60_000) catchUpHolds.removeFirst()
         if (catchUpHolds.size >= CATCH_UP_HOLDS_PER_MINUTE) return false
@@ -3075,6 +3080,8 @@ class DnaEngineCore(
         private val throttledDecoders = HashSet<String>()
         /** Halt nur, wenn der Decoder mindestens so schnell wie Echtzeit liefert (sonst Zeitlupe). */
         private const val CATCH_UP_MIN_SPEED = 0.97
+        /** Bis zu diesem Rückstand (µs) hält der Ton auch bei knapp zu langsamem Decoder kurz an. */
+        private const val SHORT_HOLD_MAX_US = 400_000L
         /** So lange (ns) dürfen ausgelassene Bilder ohne Bezug den Rückstand abbauen, bevor zum Schlüsselbild gesprungen wird. */
         private const val HURRY_BEFORE_SKIP_NS = 3_000_000_000L
         /** Früher als das wird ein Bild zurückgehalten (sonst mit Zeitpunkt an die Bildfläche gegeben). */
