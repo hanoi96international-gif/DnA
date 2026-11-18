@@ -10,6 +10,11 @@ timeout 1200 adb shell am instrument -w -e class de.ayutv.PhoneTest de.ayutv.tes
 adb exec-out run-as de.ayutv tar c -C files ci | tar x -C ci-phone --strip-components=1 || true
 adb logcat -d -v time AyuPhone:I AndroidRuntime:E '*:E' > ci-phone/logcat.txt 2>&1 || true
 status=0
-grep -q "^OK (" ci-phone/instrument.txt || { echo "::error::Handy-Test fehlgeschlagen (siehe results.txt)"; cat ci-phone/results.txt 2>/dev/null; status=1; }
+grep -q "^OK (" ci-phone/instrument.txt || {
+  echo "::error::Handy-Test fehlgeschlagen (siehe results.txt)"; cat ci-phone/results.txt 2>/dev/null; status=1
+  # Was das System mit der App gemacht hat (Absturz, Beenden, Wechsel zum Startbildschirm), damit sich Fehlschläge
+  # ohne Bildschirmfotos zuordnen lassen.
+  adb logcat -d -v time ActivityTaskManager:I ActivityManager:I WindowManager:W '*:F' 2>/dev/null | grep -E "de.ayutv|Fatal|HOME|launcher|START u0" | tail -40
+}
 grep -q "FATAL EXCEPTION" ci-phone/logcat.txt && { echo "::error::App auf dem Handy abgestürzt"; status=1; }
 exit $status
