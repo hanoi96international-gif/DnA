@@ -84,7 +84,7 @@ object Diagnostics {
 
         de.ayutv.data.net.NetInfo.sample(context).let { out.append("Verbindung jetzt: ${it.label}" + (if (it.rssi < 0) ", Signal ${it.rssi} dBm" else "") + "\n") }
         de.ayutv.data.net.ProxyCheck.last?.let { r ->
-            out.append("Proxy-Prüfung: " + (r.proxied?.let { "über Proxy ${it.country}" } ?: "Proxy nicht erreichbar") +
+            out.append("Proxy-Prüfung ${r.timeLabel()}: " + (r.proxied?.let { "über Proxy ${it.country} · ${it.ip}" } ?: "Proxy nicht erreichbar") +
                 (r.direct?.let { ", direkt ${it.country}" } ?: "") + (r.error?.let { ", Fehler: $it" } ?: "") + "\n")
         }
         de.ayutv.data.net.ProxySpeedTest.last?.let { out.append(it.report()).append('\n') }

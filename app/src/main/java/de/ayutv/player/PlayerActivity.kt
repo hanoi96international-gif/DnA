@@ -1044,8 +1044,10 @@ class PlayerActivity : ComponentActivity() {
         val host = de.ayutv.data.net.AppProxy.hostOf(originalUrl())
         if (!de.ayutv.data.net.AppProxy.proxies(host)) return "Weg: direkt"
         if (!settings.proxyStreams) return "Weg: direkt (Proxy nur für Listen und Anmeldung)"
-        val seen = de.ayutv.data.net.ProxyCheck.last?.proxied
-        return "Weg: über Proxy" + (seen?.let { " (${it.country} · ${it.ip})" } ?: "")
+        // Land/IP stammen aus der letzten Proxy-Prüfung, nicht aus diesem Stream: Wechselt der Proxy den Ausgang, stand hier
+        // ein alter Standort (Kurzbericht 21.11.: Wiedergabe „France“, Prüfung desselben Tages „Austria“). Deshalb mit Zeit.
+        val check = de.ayutv.data.net.ProxyCheck.last
+        return "Weg: über Proxy" + (check?.let { c -> c.proxied?.let { " (${it.country} · ${it.ip}, geprüft ${c.timeLabel()})" } } ?: "")
     }
 
     private fun retryLater() {
@@ -6047,11 +6049,20 @@ class PlayerActivity : ComponentActivity() {
         // Für den Fehlerbericht: was zuletzt lief und was der Player gemeldet hat.
         // Zusammenstellen hier, Schreiben abseits der Oberfläche (die Datei schreiben kostete beim Schließen Zeit).
         val sessionTitle = if (isLive) playing?.name.orEmpty() else vodTitle
-        val sessionLines = statusHistory.toList() + listOf("Engine: $engineLabel" + ((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.lastInfo?.takeIf { it.isNotEmpty() }?.let { " (zuletzt: $it)" } ?: ""), "Technik: $stats", "Abbrüche: ${dropInfo.ifEmpty { "keine" }}") +
+        // Bildrate: Hat die Anzeige sie noch nicht übernommen (Sender lief nur Sekunden), die der Engine nehmen – sonst stand
+        // „frameRate=0.0“ im Bericht, obwohl das Protokoll darunter „Bildrate des Stroms … 25 fps“ zeigte.
+        // Display: die Rate während der Wiedergabe, nicht die beim Schließen (Kurzbericht 21.11.: „Display 59.94 Hz“ neben
+        // „Display 50,0 Hz“ im Protokoll – der Fernseher hatte beim Verlassen schon zurückgeschaltet).
+        val reportStats = stats.let { s ->
+            val engineFps = dna?.streamFrameRate ?: 0f
+            if (s.frameRate <= 0f && engineFps > 0f) s.copy(frameRate = engineFps, frameRateMeasured = true) else s
+        }
+        val playbackHz = stats.displayHz.takeIf { it > 0f } ?: frameRateMatcher.currentRefreshRate()
+        val sessionLines = statusHistory.toList() + listOf("Engine: $engineLabel" + ((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.lastInfo?.takeIf { it.isNotEmpty() }?.let { " (zuletzt: $it)" } ?: ""), "Technik: $reportStats", "Abbrüche: ${dropInfo.ifEmpty { "keine" }}") +
                 // Decoder, Zähler und Zustand ausdrücklich: Im Protokoll darunter stehen sie nur am Anfang der Wiedergabe.
                 listOfNotNull((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.let {
                     "Bild: Decoder ${it.videoDecoderName ?: "?"}, gezeigt ${it.renderedFrames}, verworfen ${it.droppedFrames}, Decoder ${it.decoderSpeedPercent} % Echtzeit, " +
-                        "Display ${frameRateMatcher.currentRefreshRate()} Hz · ${runCatching { it.engineState() }.getOrDefault("")}"
+                        "Display $playbackHz Hz · ${runCatching { it.engineState() }.getOrDefault("")}"
                 }) +
                 // Was die Engine selbst gemacht hat (Decoder, HEVC-Kopf, erstes Bild, Fehler, Neuverbinden).
                 listOf("Engine-Protokoll:") + de.ayutv.player.dna.engine.DnaEngineCore.journal().takeLast(190).map { "  $it" }
