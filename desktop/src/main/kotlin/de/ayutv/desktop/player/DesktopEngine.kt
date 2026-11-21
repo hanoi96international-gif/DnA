@@ -906,11 +906,13 @@ class DesktopSubtitles {
     private val tracks = HashMap<Int, java.util.TreeMap<Long, Entry>>()
     private val pgs = HashMap<Int, de.ayutv.player.dna.engine.PgsDecoder>()
     private val dvb = HashMap<Int, de.ayutv.player.dna.engine.DvbSubtitleDecoder>()
+    private val teletext = HashMap<Int, de.ayutv.player.dna.engine.TeletextDecoder>()
 
     @Synchronized fun clear() {
         tracks.clear()
         pgs.clear()
         dvb.clear()
+        teletext.clear()
     }
 
     @Synchronized fun add(sample: Sample) {
@@ -929,6 +931,13 @@ class DesktopSubtitles {
                         ((pages[2].toInt() and 0xFF) shl 8) or (pages[3].toInt() and 0xFF),
                     )
                 }.decodeImages(sample.data)?.let { Entry(start, end, null, it) } ?: return
+            }
+            // Videotext-Untertitel (Tafel 150/777): bleibt stehen, bis die nächste Tafel kommt („" blendet aus).
+            Codec.TELETEXT -> {
+                val page = track.extra?.takeIf { it.size >= 2 }?.let { ((it[0].toInt() and 0xFF) shl 8) or (it[1].toInt() and 0xFF) } ?: 0
+                val text = teletext.getOrPut(track.id) { de.ayutv.player.dna.engine.TeletextDecoder(page, track.language) }
+                    .decode(sample.data) ?: return
+                Entry(start, Long.MAX_VALUE, text, emptyList())
             }
             else -> return
         }

@@ -91,6 +91,7 @@ sourceSets {
             "de/ayutv/player/dna/engine/Mp4Demuxer.kt",
             "de/ayutv/player/dna/engine/Hls.kt",
             "de/ayutv/player/dna/engine/TsDemuxer.kt",
+            "de/ayutv/player/dna/engine/Teletext.kt",
             "de/ayutv/player/dna/engine/AudioFramer.kt",
             "de/ayutv/player/dna/engine/VideoConfig.kt",
             "de/ayutv/player/dna/engine/DnaLog.kt",
