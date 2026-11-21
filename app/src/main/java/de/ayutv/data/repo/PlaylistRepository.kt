@@ -356,16 +356,12 @@ class PlaylistRepository(
         val vodCategories = runCatching { client.vodCategories() }.getOrDefault(emptyMap())
         val seriesCategories = runCatching { client.seriesCategories() }.getOrDefault(emptyMap())
 
-        // Erst alles herunterladen. Scheitern Filme oder Serien, bleiben die bisherigen erhalten,
-        // statt dass die Bibliothek bis zum nächsten Abgleich leer ist.
+        // Sender zuerst und sofort eintragen, dann Filme, dann Serien – jeweils für sich. Früher wurde alles erst
+        // heruntergeladen und dann gemeinsam eingetragen: Die Serienliste ist bei vielen Anbietern riesig, über einen
+        // langsamen Proxy hing der Import minutenlang bei „Serien werden geladen“, und ein neu eingerichtetes Gerät
+        // hatte bis dahin gar keine Sender (Fire TV am Beamer, 17.11.). Scheitern Filme oder Serien, bleiben die
+        // bisherigen erhalten.
         val liveFile = fetch(client.apiUrl("get_live_streams"), "xtream-${playlist.id}-live.json", "${playlist.name}: Sender werden geladen")
-        _state.value = SyncState.Running("${playlist.name}: Filme werden geladen …")
-        val vodFile = runCatching { fetch(client.apiUrl("get_vod_streams"), "xtream-${playlist.id}-vod.json", "${playlist.name}: Filme werden geladen") }
-            .onFailure { Log.w(TAG, "Filme konnten nicht geladen werden", it) }.getOrNull()
-        _state.value = SyncState.Running("${playlist.name}: Serien werden geladen …")
-        val seriesFile = runCatching { fetch(client.apiUrl("get_series"), "xtream-${playlist.id}-series.json", "${playlist.name}: Serien werden geladen") }
-            .onFailure { Log.w(TAG, "Serien konnten nicht geladen werden", it) }.getOrNull()
-
         try { db.runInTransaction(Runnable {
             val referenced = db.channels().referenced(playlist.id)
             db.channels().deleteForPlaylist(playlist.id)
@@ -389,8 +385,13 @@ class PlaylistRepository(
             } }
             db.channels().insertAll(channels)
             rescueKeys(referenced, playlist.id)
+        }) } finally { discard(liveFile) }
 
-            if (vodFile != null) {
+        _state.value = SyncState.Running("${playlist.name}: Filme werden geladen …")
+        val vodFile = runCatching {
+            fetch(client.apiUrl("get_vod_streams"), "xtream-${playlist.id}-vod.json", "${playlist.name}: Filme werden geladen", attempts = 2, limitMinutes = LIBRARY_LIMIT_MIN)
+        }.onFailure { Log.w(TAG, "Filme konnten nicht geladen werden", it) }.getOrNull()
+        if (vodFile != null) try { db.runInTransaction(Runnable {
                 db.vod().deleteForPlaylist(playlist.id)
                 val vod = ArrayList<VodEntity>(BATCH)
                 openFile(vodFile).use { input -> XtreamParsing.vodStreams(input) { item ->
@@ -407,9 +408,13 @@ class PlaylistRepository(
                     if (vod.size >= BATCH) db.vod().insertAll(vod.drain())
                 } }
                 db.vod().insertAll(vod)
-            }
+        }) } finally { discard(vodFile) }
 
-            if (seriesFile != null) {
+        _state.value = SyncState.Running("${playlist.name}: Serien werden geladen …")
+        val seriesFile = runCatching {
+            fetch(client.apiUrl("get_series"), "xtream-${playlist.id}-series.json", "${playlist.name}: Serien werden geladen", attempts = 2, limitMinutes = LIBRARY_LIMIT_MIN)
+        }.onFailure { Log.w(TAG, "Serien konnten nicht geladen werden", it) }.getOrNull()
+        if (seriesFile != null) try { db.runInTransaction(Runnable {
                 db.series().deleteForPlaylist(playlist.id)
                 val series = ArrayList<SeriesEntity>(BATCH)
                 openFile(seriesFile).use { input -> XtreamParsing.series(input) { item ->
@@ -427,12 +432,7 @@ class PlaylistRepository(
                     if (series.size >= BATCH) db.series().insertAll(series.drain())
                 } }
                 db.series().insertAll(series)
-            }
-        }) } finally {
-            discard(liveFile)
-            vodFile?.let(::discard)
-            seriesFile?.let(::discard)
-        }
+        }) } finally { discard(seriesFile) }
         // Zeitzone des Servers merken: Archiv-Adressen werden in Serverzeit angegeben.
         val account = runCatching { client.account() }.getOrNull()
         val timezone = account?.timezone ?: playlist.timezone
@@ -900,14 +900,16 @@ class PlaylistRepository(
      * Netzaussetzer nicht den ganzen Import ab, und die Datenbank-Transaktion hält keine Verbindung offen.
      * Lokale Pfade werden direkt verwendet.
      */
-    private fun fetch(url: String, name: String, progress: String? = null): File {
+    private fun fetch(url: String, name: String, progress: String? = null, attempts: Int = 3, limitMinutes: Long = 0): File {
         if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) return File(url.removePrefix("file://"))
         importDir.mkdirs()
         val target = File(importDir, name)
         var wait = 2_000L
-        repeat(3) { attempt ->
+        repeat(attempts) { attempt ->
             try {
-                importHttp.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                val call = importHttp.newCall(Request.Builder().url(url).build())
+                if (limitMinutes > 0) call.timeout().timeout(limitMinutes, TimeUnit.MINUTES)
+                call.execute().use { response ->
                     if (!response.isSuccessful) throw IOException("HTTP ${response.code} beim Laden von ${url.substringBefore('?')}")
                     target.outputStream().use { out ->
                         val input = response.body.byteStream()
@@ -929,7 +931,7 @@ class PlaylistRepository(
                 }
                 return target
             } catch (e: IOException) {
-                if (attempt == 2) {
+                if (attempt == attempts - 1) {
                     target.delete()
                     throw e
                 }
@@ -976,6 +978,8 @@ class PlaylistRepository(
     }
 
     companion object {
+        /** Filme und Serien: höchstens so viele Minuten je Datei (die Sender stehen dann längst bereit). */
+        private const val LIBRARY_LIMIT_MIN = 8L
         private const val TAG = "PlaylistRepository"
         private const val BATCH = 1000
         private const val HOUR = 3_600_000L

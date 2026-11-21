@@ -104,6 +104,25 @@ class PhoneTest {
 
     private fun tap(text: String) = tap(waitFor(text))
 
+    private fun waitUntil(timeoutMs: Long, condition: () -> Boolean): Boolean {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            if (condition()) return true
+            Thread.sleep(200)
+        }
+        return false
+    }
+
+    /** Sind die Systemknöpfe (Zurück, Home, Übersicht) gerade ausgeblendet? */
+    private fun navigationBarsHidden(scenario: ActivityScenario<MainActivity>): Boolean {
+        var hidden = false
+        scenario.onActivity { activity ->
+            val insets = androidx.core.view.ViewCompat.getRootWindowInsets(activity.window.decorView)
+            hidden = insets?.isVisible(androidx.core.view.WindowInsetsCompat.Type.navigationBars()) == false
+        }
+        return hidden
+    }
+
     @Test
     fun phone() {
         val container = app.container
@@ -125,6 +144,11 @@ class PhoneTest {
                 shot("phone_home_portrait")
             }
             section("live_tippen") {
+                // Die Navigation liegt unten, wo das System seine Knöpfe einblendet. Sind die nach dem Start noch zu sehen,
+                // trifft der Tipp die Home-Taste statt „Live TV“ (Rundgang 18.11.: danach war der Startbildschirm von
+                // Android zu sehen). Erst tippen, wenn die Systemleiste ausgeblendet ist.
+                val barsHidden = waitUntil(8_000) { navigationBarsHidden(scenario) }
+                if (!barsHidden) log("live_tippen: Systemleiste nach 8 s noch sichtbar")
                 tap("Live TV")
                 // Kam der Tipp nicht an (Emulator unter Last), einmal nachtippen – und festhalten, was zu sehen war.
                 if (runCatching { waitFor(channels.first().name, 8_000) }.isFailure) {
