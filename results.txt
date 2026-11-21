@@ -1,0 +1,19 @@
+shot 01_home
+shot 02_live
+shot 03_guide
+shot 04_sport
+shot 05_movies
+shot 06_series
+shot 07_search
+shot 08_settings
+shot 09_transition
+shot 09b_series_open
+shot 10_player
+shot 11_menu
+shot 12_menu_subtitles
+shot 13_menu_back
+shot 14_menu_picture
+shot 15_menu_closed
+shot 16_back_home
+headline: Borussia Dortmund – Eintracht Frankfurt (Bundesliga)
+result=OK
