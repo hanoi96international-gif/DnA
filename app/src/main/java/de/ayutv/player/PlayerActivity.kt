@@ -1702,6 +1702,28 @@ class PlayerActivity : ComponentActivity() {
     /** Genau an [to] springen (sonst springt der Film zum nächsten Schlüsselbild, bei Serien oft Sekunden daneben). */
     private fun seekExact(p: Player, to: Long) = p.seekTo(to) // die DNA Engine zeigt ohnehin genau ab der Stelle
 
+    /** Sender, bei dem die Untertitel schon automatisch eingeschaltet wurden (je Sender einmal, nicht bei jedem Spurwechsel). */
+    private var autoLiveSubtitlesFor: String? = null
+
+    /**
+     * Live-TV, für alle Sender: Mit „Untertitel automatisch an“ die Untertitel des Senders zeigen – in der gewünschten
+     * Sprache direkt, sonst live übersetzt (DeepL bzw. DnA-Übersetzer). Quelle sind Videotext-Untertitel (Tafel 150/777,
+     * für Hörgeschädigte) und DVB-Untertitel. Bisher blieben sie bei Sendern aus, bis man sie von Hand wählte.
+     */
+    private fun maybeAutoLiveSubtitles() {
+        val key = playing?.key ?: return
+        if (!settings.subtitlesAutoOn || castingRemote || autoLiveSubtitlesFor == key || textTracks().isEmpty()) return
+        autoLiveSubtitlesFor = key
+        val language = settings.subtitleLanguage
+        if (hasTextTrack(language)) {
+            selectTextLanguage(language)
+            subtitleStatus = "Untertitel: ${Languages.label(language)}"
+            return
+        }
+        if (!settings.translationEnabled || liveTranslateTarget == language) return
+        bestTranslationSource(allowForced = false)?.let { startLiveTranslation(language, it) }
+    }
+
     /**
      * Nur wenn "Untertitel automatisch an" eingestellt ist: Fehlt eine eingebettete Spur in der
      * bevorzugten Sprache, wird sie geladen (OpenSubtitles, sonst Übersetzung).
@@ -5589,6 +5611,7 @@ class PlayerActivity : ComponentActivity() {
             // Spuren und Länge des Films stehen fest: Untertitel schon jetzt holen, nicht erst, wenn der Puffer voll ist
             // (bei 4K einige Sekunden später). Ob eine eingebettete Spur in der Sprache da ist, ist jetzt schon bekannt.
             if (!isLive && !tracks.isEmpty && (player?.duration ?: C.TIME_UNSET) != C.TIME_UNSET) maybeAutoSubtitles()
+            if (isLive && !tracks.isEmpty) maybeAutoLiveSubtitles()
         }
 
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
