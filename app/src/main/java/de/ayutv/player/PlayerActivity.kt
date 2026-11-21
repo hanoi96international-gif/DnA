@@ -1198,7 +1198,9 @@ class PlayerActivity : ComponentActivity() {
             route = routeLabel().removePrefix("Weg: "), net = watchNet, worstRssi = watchWorstRssi,
             audio = if (stats.audioCodec.isBlank()) "" else listOfNotNull(
                 stats.audioCodec, stats.audioChannels.takeIf { it > 0 }?.let { "${it}ch" },
-                if (stats.audioDecoder.isNotBlank()) "im Gerät" else "durchgereicht",
+                // Durchreichen hat auch einen Namen („Durchreichen an Receiver (AC3)“) – zählte bisher als „im Gerät“
+                // (Kurzbericht 21.11.: alle 17 Sender „Ton im Gerät dekodiert“, obwohl Dolby durchgereicht wurde).
+                if (stats.audioDecoder.isBlank() || stats.audioDecoder.startsWith("Durchreichen")) "durchgereicht" else "im Gerät",
             ).joinToString(" "),
             lastError = watchLastError,
         )

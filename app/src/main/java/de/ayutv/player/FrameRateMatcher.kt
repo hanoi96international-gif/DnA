@@ -74,6 +74,13 @@ class FrameRateMatcher(private val activity: Activity) {
             return false
         }
         if (best == requestedModeId || best == ignoredModeId) return false
+        // Fürs Protokoll (Kurzbericht): Jeder Moduswechsel lässt HDMI neu verhandeln. Hängt danach der Fernseher (Bild nur
+        // Striche, Kurzbericht 21.11.), lässt sich so ablesen, ob und wann die App kurz vorher umgeschaltet hat.
+        modes.firstOrNull { it.id == best }?.let { to ->
+            de.ayutv.player.dna.engine.DnaLog.i(TAG, "Anzeige: Wechsel ${current.physicalWidth}×${current.physicalHeight} " +
+                "${"%.2f".format(java.util.Locale.GERMANY, current.refreshRate)} Hz → ${to.width}×${to.height} " +
+                "${"%.2f".format(java.util.Locale.GERMANY, to.refreshRate)} Hz (für $frameRate fps)")
+        }
         requestedModeId = best
         startSwitch(best)
         val attributes = activity.window.attributes
@@ -103,6 +110,7 @@ class FrameRateMatcher(private val activity: Activity) {
         /** Nicht ausgeführte Wechsel in Folge (ein langsamer Fernseher allein sperrt noch nichts). */
         @Volatile private var misses = 0
         private const val IGNORE_MS = 10 * 60_000L
+        private const val TAG = "AyuDisplay"
 
         /** In [activity] (Menüs) den gemerkten Modus anfordern, oder mit [enabled] = false wieder den Standard. */
         fun applyKept(activity: Activity, enabled: Boolean) {
@@ -154,6 +162,7 @@ class FrameRateMatcher(private val activity: Activity) {
             override fun onDisplayChanged(id: Int) {
                 if (id != displayId || activity.windowManager.defaultDisplay.mode.modeId != modeId) return
                 misses = 0
+                de.ayutv.player.dna.engine.DnaLog.i(TAG, "Anzeige: Wechsel ausgeführt")
                 // Modus steht, der Fernseher braucht aber noch einen Moment für das neue HDMI-Signal.
                 timeout?.let { handler.removeCallbacks(it) }
                 handler.postDelayed({ finishSwitch() }, Timing.SETTLE_MS)
@@ -165,6 +174,7 @@ class FrameRateMatcher(private val activity: Activity) {
         val t = Runnable {
             if (activity.windowManager.defaultDisplay.mode.modeId != modeId) {
                 misses++
+                de.ayutv.player.dna.engine.DnaLog.w(TAG, "Anzeige: Wechsel nach ${Timing.MAX_SWITCH_MS / 1000} s nicht ausgeführt ($misses. Mal)")
                 // Erst beim zweiten Mal in Folge als „schaltet nicht um“ werten (Hinweis, kurze Sperre dieses Modus).
                 if (misses >= 2) {
                     ignoredModeId = modeId
