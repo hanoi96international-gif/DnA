@@ -3272,6 +3272,16 @@ class PlayerActivity : ComponentActivity() {
         subtitleStatus = "Diese Untertitel gehören zu einem anderen Film. Suche passende …"
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
+            // Der Film hat eine eigene Untertitel-Spur (auch Bild-Untertitel zählen, nur ihre Zeiten): alle weiteren Treffer
+            // gleichzeitig laden und in einem Schritt an ihr messen – die passende steht in Sekunden fest. Bisher wurde
+            // die nächste Datei gesucht, geladen, geprüft und erst nach dem Verwerfen die übernächste (Kurzbericht 21.11.,
+            // Aquaman: drei Dateien nacheinander, 30 s bis zur passenden, die dann 89 % traf).
+            val references = embedded?.referenceStarts().orEmpty()
+            if (references.size >= SubtitleAlign.MIN_REFERENCES && language !in comparedLanguages) {
+                comparedLanguages += language
+                subLog("Vergleiche alle weiteren Dateien gleichzeitig mit der Spur des Films (${references.size} Einblendungen)")
+                if (compareCandidates(language, references, 0)) return@launch
+            }
             var problem: String? = null
             val found = runCatching { container.subtitles.find(request.key, request.url, request.title, language, settings, filmInfo()) }
                 .onFailure { Log.w(SUBTITLE_TAG, "Suche fehlgeschlagen", it); problem = describeOnlineProblem(it) }.getOrNull()
@@ -6278,7 +6288,7 @@ class PlayerActivity : ComponentActivity() {
         /** Weiter als so weit vom nächsten Anker weg gilt der Zeilen-Abgleich dort als ungeklärt. */
         private const val ELASTIC_COVER_MS = 90_000L
         /** So viele Einblendungen des Films, bevor weitere Dateien verglichen werden (Downloads sind begrenzt). */
-        private const val COMPARE_REFERENCES = 40
+        private const val COMPARE_REFERENCES = 20
         private const val SPEECH_CHECK_MS = 20_000L
         private const val SPEECH_FIRST_CHECK_MS = 2_000L
         /** So weit lädt der Player voraus, solange geladene Untertitel am Ton ausgerichtet werden (µs). */
