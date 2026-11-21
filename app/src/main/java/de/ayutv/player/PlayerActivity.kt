@@ -363,6 +363,9 @@ class PlayerActivity : ComponentActivity() {
             lifecycleScope.launch { runCatching { de.ayutv.data.net.ProxyCheck.run(container.http, de.ayutv.data.net.AppProxy.current) } }
         }
         frameRateMatcher = FrameRateMatcher(this)
+        // Gleich die Bildwiederholrate der Menüs (des zuletzt geschauten Senders) übernehmen: Ohne Vorgabe schaltete der
+        // Fernseher beim Öffnen des Players auf den Standard (60 Hz) und dann wieder auf 50 Hz – jedes Mal schwarz.
+        FrameRateMatcher.applyKept(this, enabled = true)
         frameRateMatcher.onSwitch = ::onDisplaySwitch
         frameRateMatcher.onIgnored = {
             subtitleStatus = "Der Fire TV hat nicht auf die Bildrate des Senders umgeschaltet. Fire-TV-Einstellungen → Display & Audio → " +

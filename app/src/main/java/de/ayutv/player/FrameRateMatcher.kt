@@ -61,7 +61,19 @@ class FrameRateMatcher(private val activity: Activity) {
             ?: return false
         // Für die Menüs merken (nur 50/60 Hz, bei 24 Hz liefe die Oberfläche ruckelig).
         modes.firstOrNull { it.id == best }?.takeIf { it.refreshRate >= 47f }?.let { keptModeId = best }
-        if (best == current.modeId || best == requestedModeId || best == ignoredModeId) return false
+        // Läuft der Fernseher schon im passenden Modus (aus den Menüs übernommen): ihn für dieses Fenster festhalten.
+        // Früher blieb die Vorgabe des Player-Fensters dann leer – sobald es vorne war, schaltete das System auf den
+        // Standard (59,94/60 Hz) zurück und kurz darauf wieder auf 50 Hz: bei jedem Sender zweimal schwarz.
+        if (best == current.modeId) {
+            if (activity.window.attributes.preferredDisplayModeId != best) {
+                val attributes = activity.window.attributes
+                attributes.preferredDisplayModeId = best
+                activity.window.attributes = attributes
+            }
+            requestedModeId = best
+            return false
+        }
+        if (best == requestedModeId || best == ignoredModeId) return false
         requestedModeId = best
         startSwitch(best)
         val attributes = activity.window.attributes
