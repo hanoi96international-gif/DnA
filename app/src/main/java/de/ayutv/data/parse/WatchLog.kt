@@ -47,6 +47,8 @@ object WatchLog {
     const val MAX = 60
     const val KEEP_MS = 48 * 60 * 60 * 1000L
     const val KIND_SILENT = "keine Daten"
+    /** Name eines Films/einer Serie im Protokoll (Sender haben keinen). */
+    const val VOD_PREFIX = "Film/Serie: "
     const val KIND_CLOSED = "vom Anbieter beendet"
     const val KIND_OTHER = "andere"
 
@@ -163,6 +165,12 @@ object WatchLog {
         if (worst.isNotEmpty()) {
             out.append("Auffällige Sender:\n")
             worst.forEach { out.append("  ").append(line(it)).append('\n') }
+        }
+        // Filme/Serien immer einzeln (wenige, und beim Start wird oft die Bildwiederholrate umgeschaltet – etwa auf 24 Hz).
+        val vod = recent.filter { it.channel.startsWith(VOD_PREFIX) && it !in worst }.takeLast(8)
+        if (vod.isNotEmpty()) {
+            out.append("Filme/Serien:\n")
+            vod.forEach { out.append("  ").append(line(it)).append('\n') }
         }
         return out.toString()
     }

@@ -1173,8 +1173,17 @@ class PlayerActivity : ComponentActivity() {
 
     /** Für „Best of“: wie lange der Sender lief und wie oft dabei die Verbindung abbrach. Erst ab einer Minute. */
     private fun recordWatch() {
+        // Filme und Serien auch ins Wiedergabe-Protokoll (ab 10 s): Kurzbericht 21.11. – der Fernseher hing beim Start
+        // einer 4K-Serie, im Bericht stand davon nichts (nur Sender wurden gezählt).
+        if (!isLive) {
+            if (watchStartedAt == 0L) return
+            val watched = SystemClock.elapsedRealtime() - watchStartedAt
+            watchStartedAt = 0L
+            if (watched >= 10_000 && vodTitle.isNotBlank()) logWatch(de.ayutv.data.parse.WatchLog.VOD_PREFIX + vodTitle, watched)
+            return
+        }
         val channel = playing ?: return
-        if (!isLive || watchStartedAt == 0L) return
+        if (watchStartedAt == 0L) return
         val watched = SystemClock.elapsedRealtime() - watchStartedAt
         watchStartedAt = 0L
         // Datenrate des Senders merken (ab 20 s Schauen ist die Schätzung eingeschwungen): Bei doppelten Sendern gewinnt
@@ -1600,6 +1609,9 @@ class PlayerActivity : ComponentActivity() {
 
     private fun startVod(request: VodRequest, resumeMs: Long) {
         val p = ensureEngineFor(request.key, request.title) ?: return
+        watchStartedAt = SystemClock.elapsedRealtime()
+        watchErrorsAtStart = playerErrors
+        resetWatchStats()
         if (castTarget == null && activeTv == null) freeConnection()
         // Neuer Film/neue Folge: auf dem Fernseher an derselben Stelle wie hier beginnen.
         castStartPositionMs = resumeMs
