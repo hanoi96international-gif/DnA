@@ -1871,7 +1871,13 @@ class DnaEngineCore(
                     if (!catchUpHold && (earlyUs < -CATCH_UP_US || nowNs - lateSinceNs > LATE_SUSTAINED_NS)) {
                         // Halt nicht möglich (Decoder zu langsam): H.264 – Bilder ohne Bezug gar nicht erst dekodieren.
                         // Ohne Messung (gerade gestartet) kein Halt: Ob der Decoder Echtzeit schafft, ist noch offen.
-                        if (!startCatchUpHold(-earlyUs, if (speedMeasured && !hurryInput) decodeSpeed else 0.0) && h264 && !hurryInput) {
+                        // Auslassen aber nur bei GEMESSEN langsamem Decoder. Früher auch ohne Messung: Der Decoder gibt das
+                        // erste Bild erst nach ~10 Proben aus, das Bild hängt nach dem Start ~150–200 ms zurück, nach 1 s
+                        // (vor der 2-s-Messung) begann das Auslassen – und darin wird seit 0.61.28 nicht gemessen, es endete
+                        // nie. Rundgang 21.11.: Decoder schafft Echtzeit, trotzdem 166 von 241 Bildern verworfen (Fire TV:
+                        // „bei Full HD öfter Bilder verworfen“). Jetzt: weiter messen, dann Halt (schnell) oder Auslassen.
+                        val slowDecoder = speedMeasured && decodeSpeed < CATCH_UP_MIN_SPEED
+                        if (!startCatchUpHold(-earlyUs, if (speedMeasured && !hurryInput) decodeSpeed else 0.0) && h264 && !hurryInput && slowDecoder) {
                             hurryInput = true
                             hurrySinceNs = nowNs
                             DnaLog.w(TAG, "$name schafft nur ${(decodeSpeed * 100).toInt()} % Echtzeit – lasse Bilder ohne Bezug aus")
