@@ -20,6 +20,12 @@ class TeletextDecoder(page: Int, private val language: String? = null) {
     private var changed = false
     private var charset = Charset.forLanguage(language)
     private var lastText: String? = null
+    /** Fürs Protokoll und als Ausweg: Tafeln mit Untertitel-Kennung, die tatsächlich gesendet werden. */
+    private val subtitlePages = LinkedHashSet<Int>()
+    private var headers = 0
+    private var targetSeen = false
+    private var reported = false
+    private var firstLine = false
 
     /**
      * Ein PES-Paket (ohne PES-Kopf, beginnt mit data_identifier). Ergebnis: Text der Tafel, wenn sie in diesem Paket neu
@@ -42,6 +48,10 @@ class TeletextDecoder(page: Int, private val language: String? = null) {
         changed = false
         val text = text()
         if (text == lastText) return null
+        if (!firstLine && text.isNotEmpty()) {
+            firstLine = true
+            DnaLog.i(TAG, "Videotext ${pageLabel(page)}: erste Untertitel-Zeile")
+        }
         lastText = text
         return text
     }
@@ -70,7 +80,28 @@ class TeletextDecoder(page: Int, private val language: String? = null) {
         val number = (magazine shl 8) or (tens shl 4) or units
         val serial = c11 >= 0 && (c11 and 0x01) == 1
         val subtitle = c6 >= 0 && (c6 and 0x08) != 0
-        if (page == 0 && subtitle && tens <= 9 && units <= 9) page = number
+        headers++
+        if (subtitle && tens <= 9 && units <= 9) subtitlePages += number
+        if (page == 0 && subtitle && tens <= 9 && units <= 9) {
+            page = number
+            DnaLog.i(TAG, "Videotext: Untertitel-Tafel ${pageLabel(number)} gefunden")
+        }
+        if (number == page) targetSeen = true
+        // Angegebene Tafel kommt nicht (falsch angegeben oder vom Anbieter verändert), eine andere ist als Untertitel
+        // gekennzeichnet: diese nehmen. Nach rund 2000 Tafelköpfen (einige Sekunden) einmal entscheiden.
+        if (!reported && headers >= 2000) {
+            reported = true
+            val other = subtitlePages.firstOrNull { it != page }
+            when {
+                !targetSeen && other != null -> {
+                    DnaLog.i(TAG, "Videotext: Tafel ${pageLabel(page)} kommt nicht, nehme Untertitel-Tafel ${pageLabel(other)}")
+                    page = other
+                }
+                !targetSeen -> DnaLog.i(TAG, "Videotext: ${if (page == 0) "keine Tafel als Untertitel gekennzeichnet" else "Tafel ${pageLabel(page)} kommt nicht"}" +
+                    " – der Sender schickt gerade keine Untertitel")
+                else -> DnaLog.i(TAG, "Videotext: Tafel ${pageLabel(page)} wird gesendet")
+            }
+        }
         if (number == page) {
             // Jede Übertragung der Untertitel-Tafel ist eine ganze neue Tafel (C4 „löschen“ ist bei Untertiteln gesetzt).
             receiving = true
@@ -136,6 +167,8 @@ class TeletextDecoder(page: Int, private val language: String? = null) {
     }
 
     companion object {
+        private const val TAG = "DnaTeletext"
+
         /** Bitreihenfolge umkehren: Videotext wird mit dem niedrigsten Bit zuerst gesendet. */
         internal fun reverse(b: Byte): Int {
             var v = b.toInt() and 0xFF

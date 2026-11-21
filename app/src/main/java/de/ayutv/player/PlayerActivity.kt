@@ -1707,6 +1707,7 @@ class PlayerActivity : ComponentActivity() {
 
     /** Sender, bei dem die Untertitel schon automatisch eingeschaltet wurden (je Sender einmal, nicht bei jedem Spurwechsel). */
     private var autoLiveSubtitlesFor: String? = null
+    private var liveSubtitlesLoggedFor: String? = null
 
     /**
      * Live-TV, für alle Sender: Mit „Untertitel automatisch an“ die Untertitel des Senders zeigen – in der gewünschten
@@ -1715,8 +1716,18 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun maybeAutoLiveSubtitles() {
         val key = playing?.key ?: return
-        if (!settings.subtitlesAutoOn || !settings.liveSubtitlesAuto || castingRemote || autoLiveSubtitlesFor == key || textTracks().isEmpty()) return
+        if (!settings.subtitlesAutoOn || !settings.liveSubtitlesAuto || castingRemote || autoLiveSubtitlesFor == key) return
+        // Kurzbericht: je Sender festhalten, ob er überhaupt Untertitel mitschickt.
+        val available = textTracks().map { (g, i) -> g.getTrackFormat(i).let { f -> listOfNotNull(f.label, f.language).joinToString(" ") } }
+        if (available.isEmpty()) {
+            if (liveSubtitlesLoggedFor != key) {
+                liveSubtitlesLoggedFor = key
+                subLog("Live ${playing?.name}: keine Untertitel-Spur im Strom (Anbieter schickt keinen Videotext/DVB-Untertitel)")
+            }
+            return
+        }
         autoLiveSubtitlesFor = key
+        subLog("Live ${playing?.name}: Untertitel-Spuren ${available.joinToString()}")
         val language = settings.subtitleLanguage
         if (hasTextTrack(language)) {
             selectTextLanguage(language)

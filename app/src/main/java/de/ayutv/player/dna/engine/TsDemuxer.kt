@@ -176,13 +176,23 @@ class TsDemuxer(private val output: Output) {
         val end = 3 + sectionLength - 4
         val tracks = ArrayList<Track>()
         val seen = HashSet<Int>()
+        // Fürs Protokoll: alle Spuren im Strom, auch unbekannte (Art und Deskriptoren). Daran sieht man im Kurzbericht,
+        // ob der Anbieter Videotext/Untertitel überhaupt mitschickt.
+        val summary = ArrayList<String>()
         while (i + 5 <= end) {
             val type = d[i].toInt() and 0xFF
             val pid = ((d[i + 1].toInt() and 0x1F) shl 8) or (d[i + 2].toInt() and 0xFF)
             val infoLength = ((d[i + 3].toInt() and 0x0F) shl 8) or (d[i + 4].toInt() and 0xFF)
             val descriptors = Descriptors.parse(d, i + 5, minOf(i + 5 + infoLength, end))
+            val codecForLog = codecFor(type, descriptors)
+            summary += when {
+                codecForLog == Codec.TELETEXT -> "Videotext" + (if (descriptors.teletextPage != 0) " Tafel ${TeletextDecoder.pageLabel(descriptors.teletextPage)}" else " (keine Untertitel-Tafel angegeben)") +
+                    (descriptors.teletextLanguage ?: descriptors.language)?.let { " $it" }.orEmpty()
+                codecForLog != null -> codecForLog.name + (descriptors.subtitleLanguage ?: descriptors.language)?.let { " $it" }.orEmpty()
+                else -> "unbekannt (Art 0x%02X, Deskriptoren %s)".format(type, descriptorTags(d, i + 5, minOf(i + 5 + infoLength, end)))
+            }
             i += 5 + infoLength
-            val codec = codecFor(type, descriptors) ?: continue
+            val codec = codecForLog ?: continue
             if (codec.kind == Kind.AUDIO && descriptors.audioType in 2..3) continue
             seen += pid
             val track = if (codec == Codec.DVBSUB) {
@@ -204,6 +214,8 @@ class TsDemuxer(private val output: Output) {
             if (existing == null || existing.track != track) streams[pid] = Stream(track)
         }
         streams.keys.retainAll(seen)
+        DnaLog.i("DnaTs", "Spuren im Strom: " + summary.joinToString() +
+            (if (tracks.none { it.codec == Codec.TELETEXT || it.codec == Codec.DVBSUB }) " – keine Untertitel/Videotext vom Anbieter" else ""))
         output.onTracks(tracks)
     }
 
@@ -282,6 +294,16 @@ class TsDemuxer(private val output: Output) {
                     teletext, teletextPage, teletextLanguage, teletextHearing)
             }
         }
+    }
+
+    private fun descriptorTags(d: ByteArray, from: Int, to: Int): String {
+        val tags = ArrayList<String>()
+        var k = from
+        while (k + 2 <= to) {
+            tags += "0x%02X".format(d[k].toInt() and 0xFF)
+            k += 2 + (d[k + 1].toInt() and 0xFF)
+        }
+        return tags.joinToString(" ").ifEmpty { "keine" }
     }
 
     private fun codecFor(type: Int, desc: Descriptors): Codec? = when (type) {
