@@ -1,0 +1,21 @@
+
+de.ayutv.DeviceTourTest:
+Error in tour(de.ayutv.DeviceTourTest):
+java.lang.AssertionError: 2 Abschnitte fehlgeschlagen
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at de.ayutv.DeviceTourTest.tour(DeviceTourTest.kt:1665)
+
+
+Time: 1,333.783
+There was 1 failure:
+1) tour(de.ayutv.DeviceTourTest)
+java.lang.AssertionError: 2 Abschnitte fehlgeschlagen
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at de.ayutv.DeviceTourTest.tour(DeviceTourTest.kt:1665)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
