@@ -97,6 +97,18 @@ object Diagnostics {
 
         section("Oberfläche")
         out.append("Menüs: ${de.ayutv.ui.UiPerformance.summary()}\n")
+        // Anzeige: In welcher Auflösung die Menüs gezeichnet werden (Oberfläche) und was der Fernseher bekommt (Modus).
+        // Zeichnet ein Stick die Menüs in 4K, ist die Grafik schnell am Limit („Warten auf Grafik“ oben hoch).
+        runCatching {
+            val display = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+                ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            val metrics = context.resources.displayMetrics
+            val mode = display?.mode?.let { m ->
+                "${m.physicalWidth}×${m.physicalHeight} ${"%.2f".format(Locale.GERMANY, m.refreshRate)} Hz"
+            }
+            out.append("Anzeige: Oberfläche ${metrics.widthPixels}×${metrics.heightPixels} (${metrics.densityDpi} dpi)" +
+                (mode?.let { ", Fernseher $it" } ?: "") + "\n")
+        }
         // Baseline-Profil (vorkompilierte Menüs): Wirkt erst, wenn das System die App damit übersetzt hat – bei
         // installierten APKs außerhalb eines Stores meist erst nachts im Ruhezustand. Steht hier „noch nicht“, laufen
         // die Menüs bis dahin im langsameren Interpreter/JIT.
@@ -138,7 +150,7 @@ object Diagnostics {
                     (de.ayutv.data.translate.DeepLTranslator.problem?.let { ", zuletzt: $it" } ?: "") else "") + "\n")
             out.append("Zeitversatz ${s.liveTimeshift} (${s.timeshiftMinutes} min), TV-Guide eigener ${s.ownGuideOnly}, frei ${s.internetGuide}, Verschiebung ${s.epgShiftHours} h\n")
             out.append("Vereine ${s.followedTeams.size}, Stichwörter ${s.alertKeywords.size}, Handy-Fernbedienung ${s.phoneRemote}\n")
-            out.append("Proxy ${s.proxyMode}" + (if (s.proxyMode != de.ayutv.data.net.ProxyMode.OFF) " ${s.proxyType}, Anmeldung ${s.proxyUser.isNotBlank()}, Playlists ${s.proxyPlaylists.size}" else "") +
+            out.append("Proxy ${s.proxyMode}" + (if (s.proxyMode != de.ayutv.data.net.ProxyMode.OFF) " ${s.proxyType}, Anmeldung ${s.proxyUser.isNotBlank()}, Videos über Proxy ${if (s.proxyStreams) "An" else "Aus"}, Playlists ${s.proxyPlaylists.size}" else "") +
                 (de.ayutv.data.net.AppProxy.lastFailure?.let { ", zuletzt: ${it.message}" } ?: "") + "\n")
         }
 
