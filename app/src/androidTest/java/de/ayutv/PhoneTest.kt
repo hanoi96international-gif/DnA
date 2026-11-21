@@ -169,7 +169,7 @@ class PhoneTest {
                 }
                 tap("Einstellungen")
                 Thread.sleep(1_500)
-                tap("Daten & Info")
+                tap("Netz & Daten")
                 waitFor("Fernseher fernbedienen")
                 shot("phone_settings")
                 tap("Fernseher fernbedienen")

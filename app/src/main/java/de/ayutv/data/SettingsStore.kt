@@ -514,10 +514,11 @@ class SettingsStore(private val context: Context) {
     private fun Preferences.toSettings() = AppSettings(
         bufferProfile = enumOrDefault(this[Keys.buffer], BufferProfile.BALANCED),
         filmDiskBuffer = this[Keys.filmDiskBuffer] ?: false,
-        tunneling = this[Keys.tunneling] ?: false,
+        // Ohne Schalter mehr (Einstellungen verschlankt, 0.61.36): immer die empfohlene Voreinstellung.
+        tunneling = false,
         deinterlace = this[Keys.deinterlace] ?: true,
-        displaySync = this[Keys.displaySync] ?: true,
-        liveCatchUp = this[Keys.liveCatchUp] ?: true,
+        displaySync = true,
+        liveCatchUp = true,
         matchFrameRate = this[Keys.afr] ?: true,
         frameRateFilmsOnly = this[Keys.afrFilmsOnly] ?: false,
         liveFormat = enumOrDefault(this[Keys.liveFormat], LiveFormat.TS),
