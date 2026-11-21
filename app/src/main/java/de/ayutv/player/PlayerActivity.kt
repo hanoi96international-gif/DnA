@@ -1702,6 +1702,9 @@ class PlayerActivity : ComponentActivity() {
     /** Genau an [to] springen (sonst springt der Film zum nächsten Schlüsselbild, bei Serien oft Sekunden daneben). */
     private fun seekExact(p: Player, to: Long) = p.seekTo(to) // die DNA Engine zeigt ohnehin genau ab der Stelle
 
+    /** Beginn der letzten Untertitel-Suche (für die Zeiten im Kurzbericht), 0 = keine. */
+    private var subtitleSearchStartedAt = 0L
+
     /** Sender, bei dem die Untertitel schon automatisch eingeschaltet wurden (je Sender einmal, nicht bei jedem Spurwechsel). */
     private var autoLiveSubtitlesFor: String? = null
 
@@ -1799,12 +1802,15 @@ class PlayerActivity : ComponentActivity() {
             var onlineProblem: String? = null
             if (request != null) {
                 if (settings.onlineSubtitlesEnabled) subtitleStatus = "Suche Untertitel ($label) …"
+                subtitleSearchStartedAt = SystemClock.elapsedRealtime()
                 val found = runCatching {
                     container.subtitles.find(request.key, request.url, request.title, language, settings, filmInfo()) { subtitleStatus = it }
                 }.onFailure {
                     Log.w(SUBTITLE_TAG, "Suche fehlgeschlagen", it)
                     onlineProblem = describeOnlineProblem(it)
                 }.getOrNull()
+                // Für den Kurzbericht: Wie lange Suche und Download gedauert haben.
+                subLog("Suche ${if (found != null) "fertig (${found.source})" else "ohne Treffer"} nach ${SystemClock.elapsedRealtime() - subtitleSearchStartedAt} ms")
                 // Der Film hat eine eigene vollständige Spur und die gefundene Datei passt nicht nachweislich genau zu dieser
                 // Filmdatei (nur nach Titel gefunden): gleich die Spur übersetzen – sie ist immer zeitgenau, die Untertitel
                 // sind in Sekunden da. Früher wurde erst die Datei bis zu zwei Minuten lang am Film geprüft und erst dann
@@ -2991,6 +2997,9 @@ class PlayerActivity : ComponentActivity() {
         val jump = abs(timing.toVideo(here) - subtitleTiming.toVideo(here))
         if (jump < toleranceMs && subtitleAutoSynced) return
         val first = !subtitleAutoSynced || syncedBySpeech != bySpeech
+        if (!subtitleAutoSynced && subtitleSearchStartedAt > 0) {
+            subLog("Erste Ausrichtung ${if (bySpeech) "am Ton" else "an der Spur des Films"} nach ${(SystemClock.elapsedRealtime() - subtitleSearchStartedAt) / 1000} s ab Suche")
+        }
         subtitleTiming = timing
         subtitleAutoSynced = true
         syncedBySpeech = bySpeech
@@ -6252,8 +6261,12 @@ class PlayerActivity : ComponentActivity() {
         private const val SPEECH_FIRST_CHECK_MS = 2_000L
         /** So weit lädt der Player voraus, solange geladene Untertitel am Ton ausgerichtet werden (µs). */
         private const val SUBTITLE_READ_AHEAD_US = 150_000_000L
-        /** So lange auf Ton aus der Auswertung nebenbei warten, bevor der Ton im Gerät dekodiert wird (Soundbar). */
-        private const val SPEECH_PCM_FALLBACK_MS = 45_000L
+        /**
+         * So lange auf Ton aus der Auswertung nebenbei warten, bevor der Ton im Gerät dekodiert wird (Soundbar). Die
+         * Auswertung liefert, wenn sie geht, schon nach wenigen Sekunden Ton (weites Vorausladen); kommt nach 15 s nichts,
+         * kommt auch später nichts. Bisher 45 s – so lange standen die Untertitel unausgerichtet.
+         */
+        private const val SPEECH_PCM_FALLBACK_MS = 15_000L
         // Bis so weit voraus liegt nebenbei ausgewerteter Ton (weites Vorausladen während der Ausrichtung).
         private const val SPEECH_AHEAD_MS = 160_000L
 
