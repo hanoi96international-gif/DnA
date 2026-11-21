@@ -406,7 +406,7 @@ class PlayerActivity : ComponentActivity() {
             enhance.leveling = settings.loudnessLevel
             loudnessLevel = settings.loudnessLevel
             avSyncMs = settings.avSyncMs
-            de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = settings.avSyncMs * 1000L
+            applyAvSync()
             de.ayutv.player.dna.engine.DnaEngineCore.hdrVariant =
                 de.ayutv.player.dna.engine.HdrVariant.entries.firstOrNull { it.name == settings.hdrVariant }
             textDisabled = vod != null && !settings.subtitlesAutoOn
@@ -1337,6 +1337,7 @@ class PlayerActivity : ComponentActivity() {
         // Bildwiederholrate NICHT zurücksetzen: Sonst schaltet der Fernseher bei jedem Zappen zweimal
         // um (zurück auf Standard, dann wieder auf 50 Hz) und wird jedes Mal kurz schwarz.
 
+        loadSourceAvSync()
         val url = adaptLiveUrl(channel.url)
         leaveTimeshift()
         // Läuft es auf einem Fernseher, spielt das Handy nicht mit: Es ist dann die Fernbedienung, und viele Konten
@@ -1609,6 +1610,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun startVod(request: VodRequest, resumeMs: Long) {
         val p = ensureEngineFor(request.key, request.title) ?: return
+        loadSourceAvSync()
         watchStartedAt = SystemClock.elapsedRealtime()
         watchErrorsAtStart = playerErrors
         resetWatchStats()
@@ -1707,6 +1709,7 @@ class PlayerActivity : ComponentActivity() {
 
     /** Sender, bei dem die Untertitel schon automatisch eingeschaltet wurden (je Sender einmal, nicht bei jedem Spurwechsel). */
     private var autoLiveSubtitlesFor: String? = null
+    private var liveSubtitlesLoggedFor: String? = null
 
     /**
      * Live-TV, für alle Sender: Mit „Untertitel automatisch an“ die Untertitel des Senders zeigen – in der gewünschten
@@ -1715,8 +1718,18 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun maybeAutoLiveSubtitles() {
         val key = playing?.key ?: return
-        if (!settings.subtitlesAutoOn || !settings.liveSubtitlesAuto || castingRemote || autoLiveSubtitlesFor == key || textTracks().isEmpty()) return
+        if (!settings.subtitlesAutoOn || !settings.liveSubtitlesAuto || castingRemote || autoLiveSubtitlesFor == key) return
+        // Kurzbericht: je Sender festhalten, ob er überhaupt Untertitel mitschickt.
+        val available = textTracks().map { (g, i) -> g.getTrackFormat(i).let { f -> listOfNotNull(f.label, f.language).joinToString(" ") } }
+        if (available.isEmpty()) {
+            if (liveSubtitlesLoggedFor != key) {
+                liveSubtitlesLoggedFor = key
+                subLog("Live ${playing?.name}: keine Untertitel-Spur im Strom (Anbieter schickt keinen Videotext/DVB-Untertitel)")
+            }
+            return
+        }
         autoLiveSubtitlesFor = key
+        subLog("Live ${playing?.name}: Untertitel-Spuren ${available.joinToString()}")
         val language = settings.subtitleLanguage
         if (hasTextTrack(language)) {
             selectTextLanguage(language)
@@ -3261,6 +3274,16 @@ class PlayerActivity : ComponentActivity() {
         subtitleStatus = "Diese Untertitel gehören zu einem anderen Film. Suche passende …"
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
+            // Der Film hat eine eigene Untertitel-Spur (auch Bild-Untertitel zählen, nur ihre Zeiten): alle weiteren Treffer
+            // gleichzeitig laden und in einem Schritt an ihr messen – die passende steht in Sekunden fest. Bisher wurde
+            // die nächste Datei gesucht, geladen, geprüft und erst nach dem Verwerfen die übernächste (Kurzbericht 21.11.,
+            // Aquaman: drei Dateien nacheinander, 30 s bis zur passenden, die dann 89 % traf).
+            val references = embedded?.referenceStarts().orEmpty()
+            if (references.size >= SubtitleAlign.MIN_REFERENCES && language !in comparedLanguages) {
+                comparedLanguages += language
+                subLog("Vergleiche alle weiteren Dateien gleichzeitig mit der Spur des Films (${references.size} Einblendungen)")
+                if (compareCandidates(language, references, 0)) return@launch
+            }
             var problem: String? = null
             val found = runCatching { container.subtitles.find(request.key, request.url, request.title, language, settings, filmInfo()) }
                 .onFailure { Log.w(SUBTITLE_TAG, "Suche fehlgeschlagen", it); problem = describeOnlineProblem(it) }.getOrNull()
@@ -5276,16 +5299,42 @@ class PlayerActivity : ComponentActivity() {
     /** Bildrate anpassen – bei „nur Filme“ nicht im Live-TV (Beamer: kein Schwarzbild beim Umschalten). */
     private val afrActive: Boolean get() = settings.matchFrameRate && !(isLive && settings.frameRateFilmsOnly)
 
-    /** Ton-Bild-Abgleich in ms (positiv: Ton später). Wirkt sofort und gilt für dieses Gerät. */
+    /** Ton-Bild-Abgleich für das Gerät in ms (positiv: Ton später), aus den Einstellungen – gilt für alle Sender. */
     var avSyncMs by mutableStateOf(0); private set
 
-    fun shiftAvSync(deltaMs: Int) = setAvSync(avSyncMs + deltaMs)
+    /** Zusätzlicher Abgleich nur für diesen Sender bzw. Film/Serie (gemerkt, beim nächsten Mal automatisch). */
+    var sourceAvSyncMs by mutableStateOf(0); private set
 
+    /** Was gerade wirkt: Gerät + dieser Sender. */
+    val effectiveAvSyncMs: Int get() = (avSyncMs + sourceAvSyncMs).coerceIn(de.ayutv.data.AV_SYNC_MIN_MS, de.ayutv.data.AV_SYNC_MAX_MS)
+
+    /** Im Player: Abgleich für diesen Sender/Film verschieben (wird gemerkt). */
+    fun shiftAvSync(deltaMs: Int) = setSourceAvSync(sourceAvSyncMs + deltaMs)
+
+    fun setSourceAvSync(ms: Int) {
+        val value = ms.coerceIn(de.ayutv.data.AV_SYNC_MIN_MS - avSyncMs, de.ayutv.data.AV_SYNC_MAX_MS - avSyncMs)
+        sourceAvSyncMs = value
+        memoryKey()?.let { container.playerMemory.setAvSync(it, value) }
+        applyAvSync()
+    }
+
+    /** Abgleich für das ganze Gerät (Einstellungen). */
     fun setAvSync(ms: Int) {
         val value = ms.coerceIn(de.ayutv.data.AV_SYNC_MIN_MS, de.ayutv.data.AV_SYNC_MAX_MS)
         avSyncMs = value
-        de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = value * 1000L
+        applyAvSync()
         container.scope.launch { container.settings.update { it.copy(avSyncMs = value) } }
+    }
+
+    /** Beim Start jedes Senders/Films: gemerkten Abgleich dieses Senders laden und zusammen mit dem des Geräts anwenden. */
+    private fun loadSourceAvSync() {
+        sourceAvSyncMs = memoryKey()?.let { container.playerMemory.avSync(it) } ?: 0
+        applyAvSync()
+        if (effectiveAvSyncMs != 0) de.ayutv.player.dna.engine.DnaLog.i(TAG, "Ton-Bild-Abgleich: ${de.ayutv.data.avSyncLabel(effectiveAvSyncMs)} (Gerät ${avSyncMs} ms, dieser Sender ${sourceAvSyncMs} ms)")
+    }
+
+    private fun applyAvSync() {
+        de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = effectiveAvSyncMs * 1000L
     }
 
     fun chooseAudioMode(mode: AudioMode) {
@@ -6267,7 +6316,7 @@ class PlayerActivity : ComponentActivity() {
         /** Weiter als so weit vom nächsten Anker weg gilt der Zeilen-Abgleich dort als ungeklärt. */
         private const val ELASTIC_COVER_MS = 90_000L
         /** So viele Einblendungen des Films, bevor weitere Dateien verglichen werden (Downloads sind begrenzt). */
-        private const val COMPARE_REFERENCES = 40
+        private const val COMPARE_REFERENCES = 20
         private const val SPEECH_CHECK_MS = 20_000L
         private const val SPEECH_FIRST_CHECK_MS = 2_000L
         /** So weit lädt der Player voraus, solange geladene Untertitel am Ton ausgerichtet werden (µs). */

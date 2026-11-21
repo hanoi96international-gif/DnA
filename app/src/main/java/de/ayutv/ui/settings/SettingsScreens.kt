@@ -149,8 +149,8 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
         engine.displayHdr10() && de.ayutv.player.dna.engine.GlYuvRenderer.hdrAvailable
     }
     var page by rememberSaveable { mutableStateOf(SettingsPage.PLAYLISTS) }
-    // „Einfach“: nur die wichtigen Einstellungen; „Weitere Einstellungen“ blendet den Rest ein.
-    var showAdvanced by rememberSaveable { mutableStateOf(false) }
+    // Aufgeklappter Abschnitt (Technik, TV-Guide, Prüfen & Testen …): immer nur einer, damit die Seite kurz bleibt.
+    var openGroup by rememberSaveable { mutableStateOf<String?>(null) }
     // Bereich erst nach kurzem Verweilen wechseln: Beim schnellen Durchscrollen wird nicht jede Seite aufgebaut.
     var pendingPage by remember { mutableStateOf<SettingsPage?>(null) }
     LaunchedEffect(pendingPage) {
@@ -269,16 +269,6 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                     SyncBanner(sync, Modifier.padding(top = 4.dp))
                 }
             }
-            // Einfach / Mehr: Technisches, das man selten braucht, erst auf Wunsch.
-            if (page == SettingsPage.PLAYBACK || page == SettingsPage.SUBTITLES || page == SettingsPage.DISPLAY) {
-                item(key = "advanced-${page.name}") {
-                    SettingRow(
-                        "Weitere Einstellungen",
-                        if (showAdvanced) "angezeigt" else "ausgeblendet",
-                        "Technisches, das man selten braucht: Decoder, Tonausgabe, User-Agent, Senderfassungen, Zeitkorrektur, Sprachmodelle.",
-                    ) { showAdvanced = !showAdvanced }
-                }
-            }
             when (page) {
                 SettingsPage.PLAYLISTS -> {
                     items(playlists, key = { it.id }) { playlist ->
@@ -325,73 +315,6 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                         ) { update { it.copy(bufferProfile = it.bufferProfile.next()) } }
                     }
                     item {
-                        // 4K-Test: mitgelieferter UHD-Clip (HEVC 10 Bit, HDR10, 50 Bilder/s) im normalen Player.
-                        val last = remember { de.ayutv.player.UhdSelfTest.lastResult(context) }
-                        SettingRow(
-                            "4K-Test",
-                            "",
-                            last ?: "Spielt 8 s 4K (HEVC 10 Bit, HDR10, 50 Bilder/s) und zeigt, ob es auf diesem Gerät flüssig läuft",
-                        ) { de.ayutv.player.UhdSelfTest.start(context) }
-                    }
-                    item {
-                        // Leitungs-Check: zuletzt geschauter Sender (sonst ein Favorit) einige Sekunden laden und messen.
-                        var running by remember { mutableStateOf(false) }
-                        var result by remember { mutableStateOf<de.ayutv.data.repo.LineCheck.Result?>(null) }
-                        var variants by remember { mutableStateOf<String?>(null) }
-                        var hlsBetter by remember { mutableStateOf(false) }
-                        SettingRow(
-                            "Leitungs-Check",
-                            if (running) "misst …" else "Jetzt messen",
-                            result?.let { r -> r.summary + (variants?.let { "\n$it" } ?: "") + "\nEmpfehlung: Puffer „${r.recommendation.label}“" }
-                                ?: "Lädt den zuletzt geschauten Sender (ohne Bild) und misst Antwortzeit, Aussetzer und Datenrate, dann alle Fassungen desselben Senders (auch als HLS) und kurz einen Film für die Höchstgeschwindigkeit vom Anbieter. Dauert bis zu einer Minute.",
-                        ) {
-                            if (running) return@SettingRow
-                            running = true
-                            scope.launch {
-                                val channel = container.db.history().recentLiveKeys(1).firstOrNull()?.let { container.db.channels().byKey(it) }
-                                    ?: container.db.favorites().keys().firstOrNull()?.let { container.db.channels().byKey(it) }
-                                    ?: container.db.channels().all().firstOrNull()
-                                val check = de.ayutv.data.repo.LineCheck(container.http)
-                                variants = null
-                                val live = channel?.let { check.run(it, it.userAgent ?: settings.userAgent) }
-                                result = live
-                                // Maximum suchen: alle Fassungen desselben Senders (auch anderer Playlists) und bei Xtream beide
-                                // Formate je 5 s messen. Die beste wird ab jetzt bei doppelten Sendern bevorzugt.
-                                hlsBetter = false
-                                if (channel != null && live != null && live.failed == null) {
-                                    val outcome = de.ayutv.data.repo.VariantCompare(container.db, check)
-                                        .run(channel, settings.userAgent, settings.liveFormat, current = live.kbps.takeIf { de.ayutv.data.repo.VariantCompare.hlsForm(channel.url) == null || settings.liveFormat == LiveFormat.TS })
-                                    hlsBetter = outcome.hlsWins && settings.liveFormat == LiveFormat.TS
-                                    variants = (outcome.text() + (outcome.better?.let { b ->
-                                        "\nSchärfer: „${b.label}“ mit ${"%.1f".format(b.kbps / 1000.0)} Mbit/s" +
-                                            if (b.hls && settings.liveFormat == LiveFormat.TS) " – dafür unten das Live-Format auf HLS stellen." else " – wird ab jetzt bevorzugt."
-                                    } ?: if (outcome.candidates.size > 1) "\nDie geschaute Fassung ist schon die beste." else "")).ifBlank { null }
-                                }
-                                // Dazu die echte Geschwindigkeit vom Anbieter: ein Film wird nicht in Echtzeit, sondern so schnell wie möglich geliefert.
-                                val movie = runCatching { container.db.vod().search("", 1).firstOrNull() }.getOrNull()
-                                val provider = movie?.let { check.provider(it.url, settings.userAgent) }
-                                // Proxy aktiv: denselben Film auch am Proxy vorbei laden – zeigt, ob der Proxy bremst.
-                                val direct = if (provider != null && de.ayutv.data.net.AppProxy.current.active) {
-                                    movie?.let { check.provider(it.url, settings.userAgent, direct = true) }
-                                } else null
-                                val uhd = channel?.let { de.ayutv.data.parse.ChannelQuality.height(it.key, it.name) >= 2_000 } == true
-                                if (live != null) result = live.copy(providerKbps = provider, directKbps = direct, uhd = uhd)
-                                running = false
-                            }
-                        }
-                        if (hlsBetter) {
-                            SettingRow("Live-Format auf HLS stellen", "Übernehmen", "Dein Anbieter schickt über HLS eine höhere Datenrate (schärferes Bild) als über MPEG-TS. Dafür gehen Pause und Zurückspulen im Live-Bild nicht.") {
-                                update { it.copy(liveFormat = LiveFormat.HLS) }
-                                hlsBetter = false
-                            }
-                        }
-                        result?.takeIf { it.recommendation != settings.bufferProfile }?.let { r ->
-                            SettingRow("Empfehlung übernehmen", r.recommendation.label, "Stellt den Puffer auf „${r.recommendation.label}“.") {
-                                update { it.copy(bufferProfile = r.recommendation) }
-                            }
-                        }
-                    }
-                    item {
                         SettingRow(
                             "Bildwiederholrate anpassen",
                             when {
@@ -431,53 +354,6 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                     }
                     item {
                         SettingRow(
-                            "Ton an den Bildschirm angleichen",
-                            onOff(settings.displaySync),
-                            "Empfohlen: An. Der Ton läuft unhörbar (höchstens 0,3 %) schneller oder langsamer, damit jedes Bild genau auf einen " +
-                                "Bildwechsel fällt – ohne gelegentliche Hüpfer (wie Kodi „Wiedergabe mit Anzeige synchronisieren“). Nicht, wenn der " +
-                                "Ton als Dolby/DTS an Soundbar oder Receiver geht.",
-                        ) { update { it.copy(displaySync = !it.displaySync) } }
-                    }
-                    item {
-                        SettingRow(
-                            "Live: Tempo statt Anhalten",
-                            onOff(settings.liveCatchUp),
-                            "Empfohlen: An. Wird der Vorrat bei Live-TV knapp, läuft das Bild ein paar Sekunden mit 97 % Tempo (Ton in gleicher " +
-                                "Tonhöhe), bis wieder genug da ist – statt stehen zu bleiben. Hängt ein Sender öfter, puffert die App bei ihm von " +
-                                "selbst mehr. Nicht, wenn der Ton als Dolby/DTS an Soundbar oder Receiver geht.",
-                        ) { update { it.copy(liveCatchUp = !it.liveCatchUp) } }
-                    }
-                    if (showAdvanced) item {
-                        SettingRow(
-                            "Tunneling (experimentell)",
-                            onOff(settings.tunneling),
-                            "Bild und Ton gleicht der Fire TV selbst ab (wie Kodi/ExoPlayer „Tunneling“): weniger Rechenlast bei 4K, sehr " +
-                                "gleichmäßig. Nicht jedes Gerät kann es sauber – bei schwarzem Bild oder fehlendem Ton wieder ausschalten. " +
-                                "Scheitert es, spielt der Player automatisch ohne.",
-                        ) { update { it.copy(tunneling = !it.tunneling) } }
-                    }
-                    if (showAdvanced) item {
-                        SettingRow(
-                            "Live-Format (Xtream)",
-                            settings.liveFormat.label,
-                            "MPEG-TS (empfohlen): startet schneller, Pause und Zurückspulen im Live-Bild gehen nur damit. HLS nur, wenn der " +
-                                "Leitungs-Check es vorschlägt (manche Anbieter schicken darüber eine höhere Datenrate). Sender, die der Anbieter " +
-                                "nicht als HLS liefert, laufen automatisch über MPEG-TS weiter.",
-                        ) { update { it.copy(liveFormat = if (it.liveFormat == LiveFormat.TS) LiveFormat.HLS else LiveFormat.TS) } }
-                    }
-                    if (showAdvanced) item {
-                        SettingRow(
-                            "Tonausgabe",
-                            settings.audioOutput.label,
-                            "Automatisch: Dolby/DTS gehen an Soundbar oder Receiver. Bei Stille oder Aussetzern auf „Immer im Gerät dekodieren“ stellen.",
-                        ) {
-                            update {
-                                it.copy(audioOutput = if (it.audioOutput == AudioOutput.AUTO) AudioOutput.PCM else AudioOutput.AUTO)
-                            }
-                        }
-                    }
-                    item {
-                        SettingRow(
                             "Klang",
                             settings.audioMode.label,
                             "Nachtmodus: laute Stellen leiser, leise lauter. Dialoge verstärken: Sprache lauter als Musik und Effekte. Auch im Film über ☰.",
@@ -504,44 +380,41 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                             }
                         }
                     }
-                    // Handy mit HDR-Display: wie der eigene Software-Decoder (4K) HDR10 ausgibt – per Testbild gewählt.
-                    if (touch && hdrPhone) item {
+                    item(key = "group-tech") {
                         SettingRow(
-                            "HDR im eigenen Decoder (Testbild)",
-                            de.ayutv.player.dna.engine.HdrVariant.entries.firstOrNull { it.name == settings.hdrVariant }?.label ?: "Aus",
-                            "Läuft 4K HDR im eigenen Software-Decoder (wenn der des Handys scheitert), wird es bisher nach SDR " +
-                                "umgerechnet. Im Testbild zeigt sich, welche HDR-Ausgabe dieses Handy richtig darstellt – die wählen.",
-                        ) { hdrTest = true }
+                            if (openGroup == "tech") "Technik  ▾" else "Technik  ›",
+                            "Live-Format, Tonausgabe, User-Agent",
+                            "Selten nötig: Live-Format (MPEG-TS/HLS), Tonausgabe (Dolby/DTS an Soundbar oder im Gerät) und User-Agent.",
+                        ) { openGroup = if (openGroup == "tech") null else "tech" }
                     }
-                    item {
-                        SettingRow(
-                            "Testbild: Ton-Bild-Abgleich",
-                            "",
-                            "Piepton und weißer Blitz im Sekundentakt – so lange „Ton später“ oder „früher“ drücken, bis beide " +
-                                "genau zusammenfallen. Genauer als nach Gefühl beim Film.",
-                        ) { avTest = true }
+                    if (openGroup == "tech") {
+                        item {
+                            SettingRow(
+                                "Live-Format (Xtream)",
+                                settings.liveFormat.label,
+                                "MPEG-TS (empfohlen): startet schneller, Pause und Zurückspulen im Live-Bild gehen nur damit. HLS nur, wenn der " +
+                                    "Leitungs-Check es vorschlägt (manche Anbieter schicken darüber eine höhere Datenrate). Sender, die der Anbieter " +
+                                    "nicht als HLS liefert, laufen automatisch über MPEG-TS weiter.",
+                            ) { update { it.copy(liveFormat = if (it.liveFormat == LiveFormat.TS) LiveFormat.HLS else LiveFormat.TS) } }
+                        }
+                        item {
+                            SettingRow(
+                                "Tonausgabe",
+                                settings.audioOutput.label,
+                                "Automatisch: Dolby/DTS gehen an Soundbar oder Receiver. Bei Stille oder Aussetzern auf „Immer im Gerät dekodieren“ stellen.",
+                            ) {
+                                update {
+                                    it.copy(audioOutput = if (it.audioOutput == AudioOutput.AUTO) AudioOutput.PCM else AudioOutput.AUTO)
+                                }
+                            }
+                        }
+                        item {
+                            UserAgentRow(settings.userAgent) { ua -> update { it.copy(userAgent = ua) } }
+                        }
                     }
-                    if (showAdvanced) item {
-                        UserAgentRow(settings.userAgent) { ua -> update { it.copy(userAgent = ua) } }
-                    }
-
                 }
                 SettingsPage.SUBTITLES -> {
                     if (!touch) item { PhoneSetupCard(phone, keyReport ?: phone.lastSaved) }
-                    item {
-                        SettingRow(
-                            "Zugänge prüfen",
-                            "",
-                            // Auf dem Handy fehlt die Einrichtungs-Karte, in der das Ergebnis sonst steht: hier zeigen.
-                            if (touch && keyReport != null) keyReport.orEmpty() else "Testet den OpenSubtitles-Zugang sofort.",
-                        ) {
-                            keyReport = "Prüfe …"
-                            scope.launch {
-                                keyReport = KeyCheck.run(container.http, container.settings.current())
-                                    .joinToString("\n") { (if (it.ok) "✓ " else "✗ ") + it.text }
-                            }
-                        }
-                    }
                     item {
                         SettingRow(
                             "Automatisch einschalten",
@@ -564,63 +437,87 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                             "Wird beim Einschalten zuerst gewählt. Jede andere Sprache geht im Film über ☰ → Andere Sprache.",
                         ) { pickingLanguage = true }
                     }
-                    item {
-                        SettingRow("Größe", settings.subtitleSize.label, "Gut lesbar aus Sofa-Entfernung.") {
-                            update { it.copy(subtitleSize = it.subtitleSize.next()) }
-                        }
-                    }
-                    item {
-                        SettingRow("Schriftfarbe", settings.subtitleColor.label, "Gelb ist auf hellen Bildern besser lesbar.") {
-                            update { it.copy(subtitleColor = it.subtitleColor.cycle()) }
-                        }
-                    }
-                    item {
-                        SettingRow("Hintergrund", settings.subtitleBackground.label, "Rand, Schatten oder ein dunkler Kasten hinter der Schrift.") {
-                            update { it.copy(subtitleBackground = it.subtitleBackground.cycle()) }
-                        }
-                    }
-                    item {
-                        SettingRow("Position", settings.subtitlePosition.label, "Etwas höher, wenn der Fernseher den unteren Rand abschneidet. Kinoformat: für 21:9-Leinwände, " +
-                            "auf denen der Rand eines 16:9-Bildes neben die Leinwand fällt – die Untertitel bleiben im Bild.") {
-                            update { it.copy(subtitlePosition = it.subtitlePosition.cycle()) }
-                        }
-                    }
-                    item {
+                    item(key = "group-subLook") {
                         SettingRow(
-                            "Untertitel aus dem Internet",
-                            onOff(settings.onlineSubtitles),
-                            "Sucht bei OpenSubtitles, wenn ein Film keine passenden Untertitel hat (eigener API-Key per Handy eintragen oder per Sicherung übertragen).",
-                        ) { update { it.copy(onlineSubtitles = !it.onlineSubtitles) } }
+                            if (openGroup == "subLook") "Aussehen der Untertitel  ▾" else "Aussehen der Untertitel  ›",
+                            "${settings.subtitleSize.label} · ${settings.subtitleColor.label}",
+                            "Größe, Schriftfarbe, Hintergrund und Position.",
+                        ) { openGroup = if (openGroup == "subLook") null else "subLook" }
                     }
-                    item {
-                        CredentialField(
-                            current = settings.openSubtitlesKey,
-                            label = "OpenSubtitles API-Key",
-                        ) { key -> update { it.copy(openSubtitlesKey = key) } }
-                    }
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            CredentialField(settings.openSubtitlesUser, "Benutzername (optional, mehr Downloads pro Tag)", Modifier.weight(1f)) { user ->
-                                update { it.copy(openSubtitlesUser = user) }
-                            }
-                            CredentialField(settings.openSubtitlesPassword, "Passwort (optional)", Modifier.weight(1f), password = true) { pw ->
-                                update { it.copy(openSubtitlesPassword = pw) }
-                            }
-                        }
-                    }
-
-                    item {
-                        SettingRow(
-                            "Automatische Übersetzung",
-                            settings.translationProvider.label,
-                            "Hat ein Film keine Untertitel in der Wunschsprache, werden vorhandene übersetzt. Auf dem Gerät: ohne Konto und " +
-                                "ohne Grenze, pro Sprache einmalig ein Modell (ca. 110 MB), auf schwachen Sticks aber langsam. DeepL: über das " +
-                                "Internet, schnell und besser, eigener Schlüssel nötig (DeepL API Free: 500.000 Zeichen im Monat kostenlos, " +
-                                "etwa 8–12 Filme). Geht DeepL nicht, übersetzt das Gerät.",
-                        ) { update { it.copy(translationProvider = it.translationProvider.next()) } }
-                    }
-                    if (settings.translationProvider == de.ayutv.data.TranslationProvider.DEEPL) {
+                    if (openGroup == "subLook") {
                         item {
+                            SettingRow("Größe", settings.subtitleSize.label, "Gut lesbar aus Sofa-Entfernung.") {
+                                update { it.copy(subtitleSize = it.subtitleSize.next()) }
+                            }
+                        }
+                        item {
+                            SettingRow("Schriftfarbe", settings.subtitleColor.label, "Gelb ist auf hellen Bildern besser lesbar.") {
+                                update { it.copy(subtitleColor = it.subtitleColor.cycle()) }
+                            }
+                        }
+                        item {
+                            SettingRow("Hintergrund", settings.subtitleBackground.label, "Rand, Schatten oder ein dunkler Kasten hinter der Schrift.") {
+                                update { it.copy(subtitleBackground = it.subtitleBackground.cycle()) }
+                            }
+                        }
+                        item {
+                            SettingRow("Position", settings.subtitlePosition.label, "Etwas höher, wenn der Fernseher den unteren Rand abschneidet. Kinoformat: für 21:9-Leinwände, " +
+                                "auf denen der Rand eines 16:9-Bildes neben die Leinwand fällt – die Untertitel bleiben im Bild.") {
+                                update { it.copy(subtitlePosition = it.subtitlePosition.cycle()) }
+                            }
+                        }
+                    }
+                    item(key = "group-opensubs") {
+                        SettingRow(
+                            if (openGroup == "opensubs") "Untertitel aus dem Internet  ▾" else "Untertitel aus dem Internet  ›",
+                            onOff(settings.onlineSubtitles),
+                            "OpenSubtitles: ein- und ausschalten, API-Key und Konto.",
+                        ) { openGroup = if (openGroup == "opensubs") null else "opensubs" }
+                    }
+                    if (openGroup == "opensubs") {
+                        item {
+                            SettingRow(
+                                "Untertitel aus dem Internet",
+                                onOff(settings.onlineSubtitles),
+                                "Sucht bei OpenSubtitles, wenn ein Film keine passenden Untertitel hat (eigener API-Key per Handy eintragen oder per Sicherung übertragen).",
+                            ) { update { it.copy(onlineSubtitles = !it.onlineSubtitles) } }
+                        }
+                        item {
+                            CredentialField(
+                                current = settings.openSubtitlesKey,
+                                label = "OpenSubtitles API-Key",
+                            ) { key -> update { it.copy(openSubtitlesKey = key) } }
+                        }
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                CredentialField(settings.openSubtitlesUser, "Benutzername (optional, mehr Downloads pro Tag)", Modifier.weight(1f)) { user ->
+                                    update { it.copy(openSubtitlesUser = user) }
+                                }
+                                CredentialField(settings.openSubtitlesPassword, "Passwort (optional)", Modifier.weight(1f), password = true) { pw ->
+                                    update { it.copy(openSubtitlesPassword = pw) }
+                                }
+                            }
+                        }
+                    }
+                    item(key = "group-translate") {
+                        SettingRow(
+                            if (openGroup == "translate") "Übersetzung  ▾" else "Übersetzung  ›",
+                            settings.translationProvider.label,
+                            "Womit übersetzt wird (DeepL oder auf dem Gerät), DeepL-Schlüssel, Vorübersetzen in der Ruhezeit und Sprachmodelle.",
+                        ) { openGroup = if (openGroup == "translate") null else "translate" }
+                    }
+                    if (openGroup == "translate") {
+                        item {
+                            SettingRow(
+                                "Automatische Übersetzung",
+                                settings.translationProvider.label,
+                                "Hat ein Film keine Untertitel in der Wunschsprache, werden vorhandene übersetzt. Auf dem Gerät: ohne Konto und " +
+                                    "ohne Grenze, pro Sprache einmalig ein Modell (ca. 110 MB), auf schwachen Sticks aber langsam. DeepL: über das " +
+                                    "Internet, schnell und besser, eigener Schlüssel nötig (DeepL API Free: 500.000 Zeichen im Monat kostenlos, " +
+                                    "etwa 8–12 Filme). Geht DeepL nicht, übersetzt das Gerät.",
+                            ) { update { it.copy(translationProvider = it.translationProvider.next()) } }
+                        }
+                        if (settings.translationProvider == de.ayutv.data.TranslationProvider.DEEPL) item {
                             CredentialField(
                                 settings.deeplKey,
                                 "DeepL-API-Schlüssel (deepl.com → API-Konto → Schlüssel; bequemer per Handy-Einrichtung)",
@@ -628,206 +525,46 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                             ) { key -> update { it.copy(deeplKey = key) } }
                         }
                         item {
-                            var result by remember { mutableStateOf<String?>(null) }
+                            val pretranslation = remember { de.ayutv.data.repo.Pretranslation(context, container) }
+                            var last by remember { mutableStateOf(pretranslation.lastResult) }
                             SettingRow(
-                                "DeepL prüfen",
-                                if (result == null) "Jetzt prüfen" else "",
-                                result ?: "Prüft den Schlüssel und zeigt, wie viel vom Monatskontingent schon verbraucht ist.",
+                                "Vorübersetzen in der Ruhezeit",
+                                onOff(settings.pretranslate),
+                                "Wenn der Fire TV nicht benutzt wird: Untertitel für „Weiter schauen“, die nächste Folge und „Meine Liste“ " +
+                                    "vorbereiten. Eingebettete Untertitel (Englisch bevorzugt) werden dafür aus der Filmdatei gelesen – der Stick lädt " +
+                                    "den Film einmal (je Film einige GB, höchstens ${de.ayutv.data.repo.EmbeddedPrep.MAX_READS_PER_DAY} pro Nacht) – und " +
+                                    "übersetzt. Beim Schauen sind sie dann sofort da und passen exakt." +
+                                    (last?.let { "\nZuletzt $it" } ?: ""),
+                            ) { update { it.copy(pretranslate = !it.pretranslate) } }
+                            if (settings.pretranslate) {
+                                SettingRow("Jetzt vorbereiten", "", "Startet sofort statt in der Ruhezeit (läuft im Hintergrund; hört auf, sobald ein Film läuft).") {
+                                    de.ayutv.data.repo.PretranslateWorker.runNow(context)
+                                    last = "läuft …"
+                                }
+                            }
+                        }
+                        item {
+                            var modelInfo by remember { mutableStateOf("") }
+                            LaunchedEffect(Unit) {
+                                modelInfo = withContext(Dispatchers.IO) {
+                                    val pairs = Translators.onDevice.installedPairs()
+                                    if (pairs.isEmpty()) "noch keine geladen" else "${pairs.size} · ${Translators.onDevice.installedBytes() / 1_000_000} MB"
+                                }
+                            }
+                            SettingRow(
+                                "Sprachmodelle auf dem Gerät",
+                                modelInfo,
+                                "Auswählen löscht alle geladenen Modelle (werden bei Bedarf neu geladen). Übersetzung: OPUS-MT, Universität Helsinki, CC BY 4.0.",
                             ) {
-                                result = "prüft …"
                                 scope.launch {
-                                    result = runCatching {
-                                        val usage = de.ayutv.data.translate.DeepLTranslator(container.http, settings.deeplKey, null).usage()
-                                        val format = java.text.NumberFormat.getIntegerInstance(java.util.Locale.GERMANY)
-                                        "✓ Schlüssel gültig · ${format.format(usage.used)} von ${format.format(usage.limit)} Zeichen in diesem Monat verbraucht"
-                                    }.getOrElse { "✗ ${it.message}" }
+                                    Translators.onDevice.deleteAll()
+                                    modelInfo = "noch keine geladen"
                                 }
                             }
                         }
                     }
-                    item {
-                        val pretranslation = remember { de.ayutv.data.repo.Pretranslation(context, container) }
-                        var last by remember { mutableStateOf(pretranslation.lastResult) }
-                        SettingRow(
-                            "Vorübersetzen in der Ruhezeit",
-                            onOff(settings.pretranslate),
-                            "Wenn der Fire TV nicht benutzt wird: Untertitel für „Weiter schauen“, die nächste Folge und „Meine Liste“ " +
-                                "vorbereiten. Eingebettete Untertitel (Englisch bevorzugt) werden dafür aus der Filmdatei gelesen – der Stick lädt " +
-                                "den Film einmal (je Film einige GB, höchstens ${de.ayutv.data.repo.EmbeddedPrep.MAX_READS_PER_DAY} pro Nacht) – und " +
-                                "übersetzt. Beim Schauen sind sie dann sofort da und passen exakt." +
-                                (last?.let { "\nZuletzt $it" } ?: ""),
-                        ) { update { it.copy(pretranslate = !it.pretranslate) } }
-                        if (settings.pretranslate) {
-                            SettingRow("Jetzt vorbereiten", "", "Startet sofort statt in der Ruhezeit (läuft im Hintergrund; hört auf, sobald ein Film läuft).") {
-                                de.ayutv.data.repo.PretranslateWorker.runNow(context)
-                                last = "läuft …"
-                            }
-                        }
-                    }
-                    if (showAdvanced) item {
-                        var testResult by remember { mutableStateOf("Prüft Texterkennung und Übersetzung auf diesem Gerät") }
-                        SettingRow(
-                            "Übersetzer testen",
-                            "",
-                            testResult,
-                        ) {
-                            testResult = "Läuft … (beim ersten Mal werden die Modelle geladen)"
-                            scope.launch {
-                                testResult = de.ayutv.data.translate.TranslatorSelfTest.run(settings.subtitleLanguage)
-                                de.ayutv.data.Diagnostics.saveSelfTest(context, testResult)
-                                // Übersetzer-Prozess wieder beenden: Speicher frei für die Wiedergabe.
-                                Translators.remote.release()
-                            }
-                        }
-                    }
-                    if (showAdvanced) item {
-                        var modelInfo by remember { mutableStateOf("") }
-                        LaunchedEffect(Unit) {
-                            modelInfo = withContext(Dispatchers.IO) {
-                                val pairs = Translators.onDevice.installedPairs()
-                                if (pairs.isEmpty()) "noch keine geladen" else "${pairs.size} · ${Translators.onDevice.installedBytes() / 1_000_000} MB"
-                            }
-                        }
-                        SettingRow(
-                            "Sprachmodelle auf dem Gerät",
-                            modelInfo,
-                            "Auswählen löscht alle geladenen Modelle (werden bei Bedarf neu geladen). Übersetzung: OPUS-MT, Universität Helsinki, CC BY 4.0.",
-                        ) {
-                            scope.launch {
-                                Translators.onDevice.deleteAll()
-                                modelInfo = "noch keine geladen"
-                            }
-                        }
-                    }
-
                 }
                 SettingsPage.DISPLAY -> {
-                    item {
-                        SettingRow(
-                            "Design",
-                            settings.uiTheme.label,
-                            "Prestige: Carbon-Schwarz mit Kohlefaser-Muster und Rosso-Akzent, wie ein Sportwagen-Cockpit. " +
-                                "Nordlicht: Nachthimmel mit Polarlicht in Türkis und Violett. Hannover 96: Stadionabend mit Flutlicht, " +
-                                "Schärpe, Fanschal und Linie in Schwarz-Weiß-Grün. Kino: roter Samtvorhang mit Spotlicht und Gold. Tiefsee: Lichtstrahlen " +
-                                "im dunklen Wasser, Türkis. Abendrot: Retro-Sonne über dem Horizont in Violett und Orange. Graphit: modernes Anthrazit " +
-                                "mit Glanz. Smaragd: Waldnacht mit Glühwürmchen. Neon: Stadt bei Nacht in Magenta und Cyan. Standard: schlichtes " +
-                                "Dunkelblau. OLED-Schwarz: echtes Schwarz für OLED-Fernseher. OK wechselt.",
-                        ) {
-                            val next = de.ayutv.ui.theme.UiTheme.entries[(settings.uiTheme.ordinal + 1) % de.ayutv.ui.theme.UiTheme.entries.size]
-                            de.ayutv.ui.theme.AyuColors.use(next, settings.accent)
-                            update { it.copy(uiTheme = next) }
-                        }
-                    }
-                    item {
-                        SettingRow(
-                            "Ruhiger Hintergrund",
-                            onOff(settings.calmBackground),
-                            "Menüs ohne Hintergrundbild, nur in der dunklen Grundfarbe des Designs. Entlastet schwache Sticks " +
-                                "(flüssigeres Scrollen) und ist am Beamer dunkler. Farben und Akzent des Designs bleiben.",
-                        ) {
-                            de.ayutv.ui.theme.AyuColors.calm = !settings.calmBackground
-                            update { it.copy(calmBackground = !it.calmBackground) }
-                        }
-                    }
-                    item {
-                        SettingRow(
-                            "Bildrand ausgleichen (Fernseher, Beamer)",
-                            settings.screenMargin.label,
-                            "Schneidet der Fernseher (Overscan) oder der Beamer (Trapezkorrektur, Leinwand-Rahmen) den Rand ab, " +
-                                "rücken Menüs, Uhr, Untertitel und Bild um diesen Anteil nach innen. Richtig ist es, wenn der " +
-                                "Rand dieser Seite gerade ganz zu sehen ist. OK wechselt.",
-                        ) { update { it.copy(screenMargin = it.screenMargin.cycle()) } }
-                    }
-                    item {
-                        SettingRow(
-                            "Akzentfarbe",
-                            settings.accent.label,
-                            "Farbe von Auswahlrahmen, Fortschritt und Hervorhebungen – zu jedem Design frei wählbar. OK wechselt.",
-                        ) {
-                            val next = de.ayutv.ui.theme.AccentChoice.entries[(settings.accent.ordinal + 1) % de.ayutv.ui.theme.AccentChoice.entries.size]
-                            de.ayutv.ui.theme.AyuColors.use(settings.uiTheme, next)
-                            update { it.copy(accent = next) }
-                        }
-                    }
-                    if (de.ayutv.data.FireTvHome.supported(context)) item {
-                        SettingRow(
-                            "Auf der Fire-TV-Startseite",
-                            onOff(settings.fireTvHome),
-                            "Weiterschauen und Lieblingssender in der Reihe „Empfohlen von deinen Apps“ – startet direkt, ohne DnA-TV erst zu öffnen.",
-                        ) {
-                            update { it.copy(fireTvHome = !it.fireTvHome) }
-                            container.scope.launch {
-                                delay(300)
-                                de.ayutv.data.FireTvHome.update(context.applicationContext, container)
-                            }
-                        }
-                    }
-                    item {
-                        SettingRow(
-                            "Spielstände in der Sport-Übersicht",
-                            onOff(settings.liveScores),
-                            "Deutsche Profiligen: Stand und Spielminute laufender Spiele, Endstand danach (OpenLigaDB, ohne Konto).",
-                        ) { update { it.copy(liveScores = !it.liveScores) } }
-                    }
-                    item {
-                        SettingRow(
-                            "Tor-Hinweis im Bild",
-                            onOff(settings.goalAlerts),
-                            "Trifft ein Verein, dem du folgst, erscheint beim Schauen kurz der neue Stand (nicht für das Spiel, das gerade läuft).",
-                        ) { update { it.copy(goalAlerts = !it.goalAlerts) } }
-                    }
-                    item {
-                        SettingRow(
-                            "Ruhebildschirm",
-                            onOff(settings.ambient),
-                            "Nach 3 Minuten ohne Bedienung im Menü: große Uhr, laufende Spiele mit Stand und Poster. Eine Taste beendet ihn.",
-                        ) { update { it.copy(ambient = !it.ambient) } }
-                    }
-                    item {
-                        var words by remember(settings.alertKeywords) { mutableStateOf(settings.alertKeywords.sorted().joinToString(", ")) }
-                        TvTextField(
-                            words,
-                            { words = it },
-                            "Stichwort-Alarm: Begriffe mit Komma, z. B. „Krimi, Finale“ (Erinnerung an jede neue Sendung damit)",
-                            imeAction = ImeAction.Done,
-                            onImeAction = {
-                                update { it.copy(alertKeywords = words.split(',').map(String::trim).filter { w -> w.length >= 3 }.toSet()) }
-                                container.scope.launch {
-                                    delay(500)
-                                    container.refreshTeamReminders()
-                                }
-                            },
-                        )
-                    }
-                    item {
-                        SettingRow(
-                            "TV-Guide im Menü",
-                            onOff(settings.showGuide),
-                            "Das Programm-Raster. Die Programmdaten (Jetzt läuft, Suche, Empfehlungen) bleiben auch ausgeblendet aktiv.",
-                        ) { update { it.copy(showGuide = !it.showGuide) } }
-                    }
-                    item {
-                        SettingRow(
-                            "Mini-Vorschau in Live TV",
-                            onOff(settings.livePreview),
-                            "Der ausgewählte Sender läuft nach kurzer Zeit stumm in der Detailspalte. Beim Abspielen wird sie vorher beendet (auch bei Konten mit nur einer Verbindung).",
-                        ) { update { it.copy(livePreview = !it.livePreview) } }
-                    }
-                    item {
-                        SettingRow(
-                            "Flüssige Bedienung",
-                            onOff(settings.smoothUi),
-                            "Ohne Überblendungen zwischen den Bereichen und mit sparsamerem Hintergrund: Die Menüs reagieren schneller, " +
-                                "vor allem auf älteren Sticks (dort automatisch an).",
-                        ) { update { it.copy(smoothUi = !it.smoothUi) } }
-                    }
-                    if (showAdvanced) item {
-                        SettingRow(
-                            "Hoch/Runter schaltet um",
-                            onOff(settings.zapWithUpDown),
-                            "Aus: Hoch/Runter öffnet stattdessen die Senderliste.",
-                        ) { update { it.copy(zapWithUpDown = !it.zapWithUpDown) } }
-                    }
                     item {
                         SettingRow(
                             "Live-TV anhalten und zurückspulen",
@@ -845,12 +582,39 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                             }
                         }
                     }
-                    if (showAdvanced) item {
+                    item {
+                        SettingRow(
+                            "Hoch/Runter schaltet um",
+                            onOff(settings.zapWithUpDown),
+                            "Aus: Hoch/Runter öffnet stattdessen die Senderliste.",
+                        ) { update { it.copy(zapWithUpDown = !it.zapWithUpDown) } }
+                    }
+                    item {
                         SettingRow(
                             "Serien: nächste Folge automatisch",
                             onOff(settings.autoNextEpisode),
                             "In der letzten Minute erscheint „Nächste Folge“ mit Countdown, am Ende startet sie von selbst (OK sofort, andere Taste hält an).",
                         ) { update { it.copy(autoNextEpisode = !it.autoNextEpisode) } }
+                    }
+                    item {
+                        SettingRow(
+                            "Mini-Vorschau in Live TV",
+                            onOff(settings.livePreview),
+                            "Der ausgewählte Sender läuft nach kurzer Zeit stumm in der Detailspalte. Beim Abspielen wird sie vorher beendet (auch bei Konten mit nur einer Verbindung).",
+                        ) { update { it.copy(livePreview = !it.livePreview) } }
+                    }
+                    if (de.ayutv.data.FireTvHome.supported(context)) item {
+                        SettingRow(
+                            "Auf der Fire-TV-Startseite",
+                            onOff(settings.fireTvHome),
+                            "Weiterschauen und Lieblingssender in der Reihe „Empfohlen von deinen Apps“ – startet direkt, ohne DnA-TV erst zu öffnen.",
+                        ) {
+                            update { it.copy(fireTvHome = !it.fireTvHome) }
+                            container.scope.launch {
+                                delay(300)
+                                de.ayutv.data.FireTvHome.update(context.applicationContext, container)
+                            }
+                        }
                     }
                     if (touch) item {
                         SettingRow(
@@ -860,245 +624,352 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                                 "HD braucht sonst etwa 2–3 GB pro Stunde.",
                         ) { update { it.copy(dataSaver = !it.dataSaver) } }
                     }
-                    item {
+                    item(key = "group-dupes") {
                         SettingRow(
-                            "Doppelte Sender zusammenfassen",
-                            onOff(settings.mergeVariants),
-                            "Gleiche Sender in SD, HD, 4K, RAW oder als Backup erscheinen einmal, in der besten Fassung. " +
-                                "Fällt sie aus, schaltet der Player automatisch auf die nächste.",
-                        ) { update { it.copy(mergeVariants = !it.mergeVariants) } }
+                            if (openGroup == "dupes") "Doppelte Sender  ▾" else "Doppelte Sender  ›",
+                            if (settings.mergeVariants) "zusammengefasst" else "alle einzeln",
+                            "Zusammenfassen, beste Fassung, Mindestqualität, nicht laufende ausblenden und Sender-Check in der Ruhezeit.",
+                        ) { openGroup = if (openGroup == "dupes") null else "dupes" }
                     }
-                    if (showAdvanced) item {
-                        SettingRow(
-                            "Mindestqualität",
-                            settings.minQuality.label,
-                            "Sender, deren Auflösung bekanntermaßen darunter liegt (gemessen oder laut Name wie „SD“), werden ausgeblendet. " +
-                                "Gibt es den Sender auch besser, bleibt die bessere Fassung. Unbekannte bleiben sichtbar.",
-                        ) { update { it.copy(minQuality = it.minQuality.next()) } }
-                    }
-                    if (showAdvanced) item {
-                        SettingRow(
-                            "Beste Fassung bei doppelten Sendern",
-                            if (settings.preferUhd) "4K, wenn vorhanden" else "Full HD (stabiler)",
-                            "Welche Fassung ein doppelt geführter Sender zeigt. Gemessenes zählt vor dem Namen; ausgefallene Fassungen kommen nach hinten.",
-                        ) { update { it.copy(preferUhd = !it.preferUhd) } }
-                    }
-                    if (showAdvanced) item {
-                        SettingRow(
-                            "Nicht laufende Fassungen ausblenden",
-                            onOff(settings.hideBrokenChannels),
-                            "Fassungen, die im Sender-Check oder beim Schauen zweimal nicht liefen, verschwinden aus den Listen.",
-                        ) { update { it.copy(hideBrokenChannels = !it.hideBrokenChannels) } }
-                    }
-                    if (showAdvanced) item {
-                        val check = remember { de.ayutv.data.repo.ChannelCheck(context, container) }
-                        var last by remember { mutableStateOf(check.lastResult) }
-                        SettingRow(
-                            "Sender-Check in der Ruhezeit",
-                            onOff(settings.channelCheck),
-                            "Wenn der Fire TV nicht benutzt wird: jede Fassung doppelter Sender und deine Favoriten kurz anspielen " +
-                                "(ohne Bild und Ton) und Auflösung, Startzeit und Ausfälle merken. Gemessen: ${de.ayutv.data.parse.ChannelQuality.size} Fassungen." +
-                                (last?.let { "\nZuletzt $it" } ?: ""),
-                        ) { update { it.copy(channelCheck = !it.channelCheck) } }
-                        if (settings.channelCheck) {
-                            SettingRow("Jetzt prüfen", "", "Startet den Check sofort im Hintergrund (einige Minuten, nur solange nichts läuft).") {
-                                de.ayutv.data.repo.ChannelCheckWorker.runNow(context)
-                                last = "läuft …"
+                    if (openGroup == "dupes") {
+                        item {
+                            SettingRow(
+                                "Doppelte Sender zusammenfassen",
+                                onOff(settings.mergeVariants),
+                                "Gleiche Sender in SD, HD, 4K, RAW oder als Backup erscheinen einmal, in der besten Fassung. " +
+                                    "Fällt sie aus, schaltet der Player automatisch auf die nächste.",
+                            ) { update { it.copy(mergeVariants = !it.mergeVariants) } }
+                        }
+                        item {
+                            SettingRow(
+                                "Mindestqualität",
+                                settings.minQuality.label,
+                                "Sender, deren Auflösung bekanntermaßen darunter liegt (gemessen oder laut Name wie „SD“), werden ausgeblendet. " +
+                                    "Gibt es den Sender auch besser, bleibt die bessere Fassung. Unbekannte bleiben sichtbar.",
+                            ) { update { it.copy(minQuality = it.minQuality.next()) } }
+                        }
+                        item {
+                            SettingRow(
+                                "Beste Fassung bei doppelten Sendern",
+                                if (settings.preferUhd) "4K, wenn vorhanden" else "Full HD (stabiler)",
+                                "Welche Fassung ein doppelt geführter Sender zeigt. Gemessenes zählt vor dem Namen; ausgefallene Fassungen kommen nach hinten.",
+                            ) { update { it.copy(preferUhd = !it.preferUhd) } }
+                        }
+                        item {
+                            SettingRow(
+                                "Nicht laufende Fassungen ausblenden",
+                                onOff(settings.hideBrokenChannels),
+                                "Fassungen, die im Sender-Check oder beim Schauen zweimal nicht liefen, verschwinden aus den Listen.",
+                            ) { update { it.copy(hideBrokenChannels = !it.hideBrokenChannels) } }
+                        }
+                        item {
+                            val check = remember { de.ayutv.data.repo.ChannelCheck(context, container) }
+                            var last by remember { mutableStateOf(check.lastResult) }
+                            SettingRow(
+                                "Sender-Check in der Ruhezeit",
+                                onOff(settings.channelCheck),
+                                "Wenn der Fire TV nicht benutzt wird: jede Fassung doppelter Sender und deine Favoriten kurz anspielen " +
+                                    "(ohne Bild und Ton) und Auflösung, Startzeit und Ausfälle merken. Gemessen: ${de.ayutv.data.parse.ChannelQuality.size} Fassungen." +
+                                    (last?.let { "\nZuletzt $it" } ?: ""),
+                            ) { update { it.copy(channelCheck = !it.channelCheck) } }
+                            if (settings.channelCheck) {
+                                SettingRow("Jetzt prüfen", "", "Startet den Check sofort im Hintergrund (einige Minuten, nur solange nichts läuft).") {
+                                    de.ayutv.data.repo.ChannelCheckWorker.runNow(context)
+                                    last = "läuft …"
+                                }
                             }
                         }
                     }
-                    item {
+                    item(key = "group-guide") {
                         SettingRow(
-                            "TV-Guide",
-                            when {
-                                settings.ownGuideOnly -> "Nur eigener"
-                                !settings.internetGuide -> "Nur vom Anbieter"
-                                settings.preferInternetGuide -> "Eigener zuerst, Anbieter ergänzt"
-                                else -> "Anbieter zuerst, eigener ergänzt"
-                            },
-                            "Eigener TV-Guide: freies EPG für Deutschland, Österreich und die Schweiz (epgshare01, open-epg, kostenlose 24/7-Dienste), richtige Zeiten auch nach " +
-                                "der Zeitumstellung. Der TV-Guide des Anbieters liegt oft daneben; „Nur eigener“ lädt ihn gar nicht. " +
-                                "Der Guide wird nach dem Umschalten neu geladen.",
-                        ) {
-                            scope.launch {
-                                // Nur eigener → Eigener zuerst → Anbieter zuerst → Nur Anbieter → Nur eigener
-                                container.settings.update {
-                                    when {
-                                        it.ownGuideOnly -> it.copy(ownGuideOnly = false, internetGuide = true, preferInternetGuide = true)
-                                        it.internetGuide && it.preferInternetGuide -> it.copy(preferInternetGuide = false)
-                                        it.internetGuide -> it.copy(internetGuide = false)
-                                        else -> it.copy(ownGuideOnly = true, internetGuide = true, preferInternetGuide = false)
+                            if (openGroup == "guide") "TV-Guide  ▾" else "TV-Guide  ›",
+                            if (settings.showGuide) "im Menü" else "ausgeblendet",
+                            "Quelle, Raster im Menü, Stichwort-Alarm, Uhrzeit und Zeitverschiebung.",
+                        ) { openGroup = if (openGroup == "guide") null else "guide" }
+                    }
+                    if (openGroup == "guide") {
+                        item {
+                            SettingRow(
+                                "TV-Guide",
+                                when {
+                                    settings.ownGuideOnly -> "Nur eigener"
+                                    !settings.internetGuide -> "Nur vom Anbieter"
+                                    settings.preferInternetGuide -> "Eigener zuerst, Anbieter ergänzt"
+                                    else -> "Anbieter zuerst, eigener ergänzt"
+                                },
+                                "Eigener TV-Guide: freies EPG für Deutschland, Österreich und die Schweiz (epgshare01, open-epg, kostenlose 24/7-Dienste), richtige Zeiten auch nach " +
+                                    "der Zeitumstellung. Der TV-Guide des Anbieters liegt oft daneben; „Nur eigener“ lädt ihn gar nicht. " +
+                                    "Der Guide wird nach dem Umschalten neu geladen.",
+                            ) {
+                                scope.launch {
+                                    // Nur eigener → Eigener zuerst → Anbieter zuerst → Nur Anbieter → Nur eigener
+                                    container.settings.update {
+                                        when {
+                                            it.ownGuideOnly -> it.copy(ownGuideOnly = false, internetGuide = true, preferInternetGuide = true)
+                                            it.internetGuide && it.preferInternetGuide -> it.copy(preferInternetGuide = false)
+                                            it.internetGuide -> it.copy(internetGuide = false)
+                                            else -> it.copy(ownGuideOnly = true, internetGuide = true, preferInternetGuide = false)
+                                        }
+                                    }
+                                    epgReloadJob?.cancel()
+                                    epgReloadJob = container.scope.launch {
+                                        delay(2_500)
+                                        container.playlists.reloadAllEpg()
                                     }
                                 }
-                                epgReloadJob?.cancel()
-                                epgReloadJob = container.scope.launch {
-                                    delay(2_500)
-                                    container.playlists.reloadAllEpg()
-                                }
                             }
                         }
-                    }
-                    if (showAdvanced) item {
-                        val context = androidx.compose.ui.platform.LocalContext.current
-                        val zone = java.util.TimeZone.getDefault()
-                        val name = zone.getDisplayName(zone.inDaylightTime(Date()), java.util.TimeZone.LONG, java.util.Locale.GERMAN)
-                        SettingRow(
-                            "Uhrzeit und Zeitzone",
-                            zone.id,
-                            when {
-                                de.ayutv.AppTime.corrected ->
-                                    "Der Fire TV steht auf ${de.ayutv.AppTime.deviceZone}. DnA-TV rechnet trotzdem mit $name, Uhr und TV-Guide stimmen. " +
-                                        "Für andere Apps am Fire TV: Einstellungen → Präferenzen → Datum und Uhrzeit → Zeitzone. OK öffnet die Einstellung, falls möglich."
-                                de.ayutv.AppTime.deviceOnUtc ->
-                                    "Der Fire TV steht auf UTC: Uhr und TV-Guide sind dann verschoben. Bitte die Zeitzone einstellen " +
-                                        "(Einstellungen → Präferenzen → Datum und Uhrzeit). OK öffnet die Einstellung, falls möglich."
-                                else -> "$name, wie am Gerät eingestellt."
-                            },
-                        ) {
-                            runCatching {
-                                context.startActivity(android.content.Intent(android.provider.Settings.ACTION_DATE_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-                            }
-                        }
-                    }
-                    if (showAdvanced) item {
-                        val shift = settings.epgShiftHours
-                        SettingRow(
-                            "TV-Guide-Zeitverschiebung",
-                            if (shift == 0) "Keine" else "%+d Std.".format(shift),
-                            "Falls „Jetzt läuft“ nicht stimmt: Zeiten des Anbieters korrigieren. Der Guide wird danach neu geladen.",
-                        ) {
-                            // Zyklus 0, +1 … +12, −12 … −1
-                            val next = if (shift >= 12) -12 else shift + 1
-                            scope.launch {
-                                container.settings.update { it.copy(epgShiftHours = next) }
-                                epgReloadJob?.cancel()
-                                epgReloadJob = container.scope.launch {
-                                    delay(2_500) // mehrere Klicks abwarten, dann einmal neu laden
-                                    container.playlists.reloadAllEpg()
-                                }
-                            }
-                        }
-                    }
-
-                }
-                SettingsPage.PROXY -> {
-                    item {
-                        SettingRow(
-                            "Proxy",
-                            settings.proxyMode.label,
-                            "Nur DnA-TV läuft über den Proxy, andere Apps und die Handy-Fernbedienung nicht. Fällt der Proxy aus, " +
-                                "spielt die App nicht heimlich ohne ihn weiter, sondern meldet es.",
-                        ) { update { it.copy(proxyMode = it.proxyMode.cycle()) } }
-                    }
-                    item {
-                        SettingRow("Art", settings.proxyType.label, "Steht beim Anbieter in den Zugangsdaten (HTTP/HTTPS-Proxy oder SOCKS5).") {
-                            update { it.copy(proxyType = it.proxyType.cycle()) }
-                        }
-                    }
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            CredentialField(settings.proxyHost, "Adresse (IP oder Name)", Modifier.weight(2f)) { host ->
-                                update { it.copy(proxyHost = host) }
-                            }
-                            CredentialField(settings.proxyPort.takeIf { it > 0 }?.toString().orEmpty(), "Port", Modifier.weight(1f), keyboardType = KeyboardType.Number) { port ->
-                                update { it.copy(proxyPort = port.trim().toIntOrNull() ?: 0) }
-                            }
-                        }
-                    }
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            CredentialField(settings.proxyUser, "Benutzer (falls verlangt)", Modifier.weight(1f)) { user ->
-                                update { it.copy(proxyUser = user) }
-                            }
-                            CredentialField(settings.proxyPassword, "Passwort", Modifier.weight(1f), password = true) { pw ->
-                                update { it.copy(proxyPassword = pw) }
-                            }
-                        }
-                    }
-                    item {
-                        var running by remember { mutableStateOf(false) }
-                        var result by remember { mutableStateOf<de.ayutv.data.net.ProxyCheck.Result?>(null) }
-                        SettingRow(
-                            "Proxy testen",
-                            when {
-                                running -> "prüft …"
-                                result?.ok == true -> "✓"
-                                result != null -> "✗"
-                                else -> "Jetzt prüfen"
-                            },
-                            result?.summary() ?: "Zeigt, mit welcher IP und aus welchem Land der Stick direkt und über den Proxy zu sehen ist.",
-                        ) {
-                            if (running) return@SettingRow
-                            running = true
-                            scope.launch {
-                                result = de.ayutv.data.net.ProxyCheck.run(container.http, settings.proxyConfig)
-                                running = false
-                            }
-                        }
-                    }
-                    if (settings.proxyConfig.complete) item {
-                        // Speedtest: Ping und Geschwindigkeit über den Proxy und direkt (neutraler Messserver, eine Verbindung).
-                        var phase by remember { mutableStateOf<String?>(null) }
-                        var result by remember { mutableStateOf(de.ayutv.data.net.ProxySpeedTest.last) }
-                        SettingRow(
-                            "Proxy-Speedtest",
-                            phase?.let { "misst $it" } ?: "Jetzt messen",
-                            result?.summary()
-                                ?: "Misst Ping und Geschwindigkeit über den Proxy und zum Vergleich direkt, je etwa 10 Sekunden über eine " +
-                                    "Verbindung wie bei einem Videostream. Die schwächste Sekunde zeigt, ob 4K oder Full HD ohne Hänger " +
-                                    "durchkommt. Verbraucht bis zu 300 MB, vorher die Wiedergabe beenden.",
-                        ) {
-                            if (phase != null) return@SettingRow
-                            phase = "…"
-                            scope.launch {
-                                result = de.ayutv.data.net.ProxySpeedTest.run(container.http, settings.proxyConfig) { phase = it }
-                                phase = null
-                            }
-                        }
-                    }
-                    if (settings.proxyMode != de.ayutv.data.net.ProxyMode.OFF) item {
-                        SettingRow(
-                            "Videostreams über den Proxy",
-                            onOff(settings.proxyStreams),
-                            "Aus: Nur Anmeldung, Listen und TV-Guide laufen über den Proxy, die Videos direkt. Viele Proxys liefern nur " +
-                                "10–20 Mbit/s – zu wenig für 4K (Bild hängt, Puffer leer). Der Leitungs-Check zeigt beide Wege im Vergleich. " +
-                                "Hinweis: Der Anbieter sieht beim direkten Weg deine eigene Adresse.",
-                        ) { update { it.copy(proxyStreams = !it.proxyStreams) } }
-                    }
-                    if (settings.proxyMode == de.ayutv.data.net.ProxyMode.SELECTED) {
                         item {
-                            Text(
-                                "Über den Proxy laufen (OK schaltet um):",
-                                color = AyuColors.TextSecondary,
-                                fontSize = 14.sp,
-                                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                            SettingRow(
+                                "TV-Guide im Menü",
+                                onOff(settings.showGuide),
+                                "Das Programm-Raster. Die Programmdaten (Jetzt läuft, Suche, Empfehlungen) bleiben auch ausgeblendet aktiv.",
+                            ) { update { it.copy(showGuide = !it.showGuide) } }
+                        }
+                        item {
+                            var words by remember(settings.alertKeywords) { mutableStateOf(settings.alertKeywords.sorted().joinToString(", ")) }
+                            TvTextField(
+                                words,
+                                { words = it },
+                                "Stichwort-Alarm: Begriffe mit Komma, z. B. „Krimi, Finale“ (Erinnerung an jede neue Sendung damit)",
+                                imeAction = ImeAction.Done,
+                                onImeAction = {
+                                    update { it.copy(alertKeywords = words.split(',').map(String::trim).filter { w -> w.length >= 3 }.toSet()) }
+                                    container.scope.launch {
+                                        delay(500)
+                                        container.refreshTeamReminders()
+                                    }
+                                },
                             )
                         }
-                        items(playlists, key = { "proxy-${it.id}" }) { playlist ->
-                            val on = playlist.id.toString() in settings.proxyPlaylists
-                            SettingRow(playlist.name, if (on) "über Proxy" else "direkt", "") {
-                                update {
-                                    val id = playlist.id.toString()
-                                    it.copy(proxyPlaylists = if (id in it.proxyPlaylists) it.proxyPlaylists - id else it.proxyPlaylists + id)
+                        item {
+                            val context = androidx.compose.ui.platform.LocalContext.current
+                            val zone = java.util.TimeZone.getDefault()
+                            val name = zone.getDisplayName(zone.inDaylightTime(Date()), java.util.TimeZone.LONG, java.util.Locale.GERMAN)
+                            SettingRow(
+                                "Uhrzeit und Zeitzone",
+                                zone.id,
+                                when {
+                                    de.ayutv.AppTime.corrected ->
+                                        "Der Fire TV steht auf ${de.ayutv.AppTime.deviceZone}. DnA-TV rechnet trotzdem mit $name, Uhr und TV-Guide stimmen. " +
+                                            "Für andere Apps am Fire TV: Einstellungen → Präferenzen → Datum und Uhrzeit → Zeitzone. OK öffnet die Einstellung, falls möglich."
+                                    de.ayutv.AppTime.deviceOnUtc ->
+                                        "Der Fire TV steht auf UTC: Uhr und TV-Guide sind dann verschoben. Bitte die Zeitzone einstellen " +
+                                            "(Einstellungen → Präferenzen → Datum und Uhrzeit). OK öffnet die Einstellung, falls möglich."
+                                    else -> "$name, wie am Gerät eingestellt."
+                                },
+                            ) {
+                                runCatching {
+                                    context.startActivity(android.content.Intent(android.provider.Settings.ACTION_DATE_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
                             }
                         }
-                        if (playlists.isNotEmpty() && settings.proxyPlaylists.none { id -> playlists.any { it.id.toString() == id } }) {
-                            item {
-                                Text("Noch keine Playlist gewählt: Bis dahin geht alles direkt.", color = AyuColors.Live, fontSize = 14.sp)
+                        item {
+                            val shift = settings.epgShiftHours
+                            SettingRow(
+                                "TV-Guide-Zeitverschiebung",
+                                if (shift == 0) "Keine" else "%+d Std.".format(shift),
+                                "Falls „Jetzt läuft“ nicht stimmt: Zeiten des Anbieters korrigieren. Der Guide wird danach neu geladen.",
+                            ) {
+                                // Zyklus 0, +1 … +12, −12 … −1
+                                val next = if (shift >= 12) -12 else shift + 1
+                                scope.launch {
+                                    container.settings.update { it.copy(epgShiftHours = next) }
+                                    epgReloadJob?.cancel()
+                                    epgReloadJob = container.scope.launch {
+                                        delay(2_500) // mehrere Klicks abwarten, dann einmal neu laden
+                                        container.playlists.reloadAllEpg()
+                                    }
+                                }
                             }
                         }
                     }
-                    if (settings.proxyMode != de.ayutv.data.net.ProxyMode.OFF && !settings.proxyConfig.complete) {
+                    item(key = "group-look") {
+                        SettingRow(
+                            if (openGroup == "look") "Aussehen  ▾" else "Aussehen  ›",
+                            settings.uiTheme.label,
+                            "Design, Akzentfarbe, ruhiger Hintergrund, flüssige Bedienung, Bildrand und Ruhebildschirm.",
+                        ) { openGroup = if (openGroup == "look") null else "look" }
+                    }
+                    if (openGroup == "look") {
                         item {
-                            Text("Adresse und Port fehlen noch: Bis dahin geht alles direkt.", color = AyuColors.Live, fontSize = 14.sp)
+                            SettingRow(
+                                "Design",
+                                settings.uiTheme.label,
+                                "Prestige: Carbon-Schwarz mit Kohlefaser-Muster und Rosso-Akzent, wie ein Sportwagen-Cockpit. " +
+                                    "Nordlicht: Nachthimmel mit Polarlicht in Türkis und Violett. Hannover 96: Stadionabend mit Flutlicht, " +
+                                    "Schärpe, Fanschal und Linie in Schwarz-Weiß-Grün. Kino: roter Samtvorhang mit Spotlicht und Gold. Tiefsee: Lichtstrahlen " +
+                                    "im dunklen Wasser, Türkis. Abendrot: Retro-Sonne über dem Horizont in Violett und Orange. Graphit: modernes Anthrazit " +
+                                    "mit Glanz. Smaragd: Waldnacht mit Glühwürmchen. Neon: Stadt bei Nacht in Magenta und Cyan. Standard: schlichtes " +
+                                    "Dunkelblau. OLED-Schwarz: echtes Schwarz für OLED-Fernseher. OK wechselt.",
+                            ) {
+                                val next = de.ayutv.ui.theme.UiTheme.entries[(settings.uiTheme.ordinal + 1) % de.ayutv.ui.theme.UiTheme.entries.size]
+                                de.ayutv.ui.theme.AyuColors.use(next, settings.accent)
+                                update { it.copy(uiTheme = next) }
+                            }
+                        }
+                        item {
+                            SettingRow(
+                                "Akzentfarbe",
+                                settings.accent.label,
+                                "Farbe von Auswahlrahmen, Fortschritt und Hervorhebungen – zu jedem Design frei wählbar. OK wechselt.",
+                            ) {
+                                val next = de.ayutv.ui.theme.AccentChoice.entries[(settings.accent.ordinal + 1) % de.ayutv.ui.theme.AccentChoice.entries.size]
+                                de.ayutv.ui.theme.AyuColors.use(settings.uiTheme, next)
+                                update { it.copy(accent = next) }
+                            }
+                        }
+                        item {
+                            SettingRow(
+                                "Ruhiger Hintergrund",
+                                onOff(settings.calmBackground),
+                                "Menüs ohne Hintergrundbild, nur in der dunklen Grundfarbe des Designs. Entlastet schwache Sticks " +
+                                    "(flüssigeres Scrollen) und ist am Beamer dunkler. Farben und Akzent des Designs bleiben.",
+                            ) {
+                                de.ayutv.ui.theme.AyuColors.calm = !settings.calmBackground
+                                update { it.copy(calmBackground = !it.calmBackground) }
+                            }
+                        }
+                        item {
+                            SettingRow(
+                                "Flüssige Bedienung",
+                                onOff(settings.smoothUi),
+                                "Ohne Überblendungen zwischen den Bereichen und mit sparsamerem Hintergrund: Die Menüs reagieren schneller, " +
+                                    "vor allem auf älteren Sticks (dort automatisch an).",
+                            ) { update { it.copy(smoothUi = !it.smoothUi) } }
+                        }
+                        item {
+                            SettingRow(
+                                "Bildrand ausgleichen (Fernseher, Beamer)",
+                                settings.screenMargin.label,
+                                "Schneidet der Fernseher (Overscan) oder der Beamer (Trapezkorrektur, Leinwand-Rahmen) den Rand ab, " +
+                                    "rücken Menüs, Uhr, Untertitel und Bild um diesen Anteil nach innen. Richtig ist es, wenn der " +
+                                    "Rand dieser Seite gerade ganz zu sehen ist. OK wechselt.",
+                            ) { update { it.copy(screenMargin = it.screenMargin.cycle()) } }
+                        }
+                        item {
+                            SettingRow(
+                                "Ruhebildschirm",
+                                onOff(settings.ambient),
+                                "Nach 3 Minuten ohne Bedienung im Menü: große Uhr, laufende Spiele mit Stand und Poster. Eine Taste beendet ihn.",
+                            ) { update { it.copy(ambient = !it.ambient) } }
                         }
                     }
-                }
-                SettingsPage.PARENTAL -> {
-                    item { ParentalSettings() }
+                    item(key = "group-sport") {
+                        SettingRow(
+                            if (openGroup == "sport") "Sport  ▾" else "Sport  ›",
+                            onOff(settings.liveScores),
+                            "Spielstände in der Sport-Übersicht und Tor-Hinweis im Bild.",
+                        ) { openGroup = if (openGroup == "sport") null else "sport" }
+                    }
+                    if (openGroup == "sport") {
+                        item {
+                            SettingRow(
+                                "Spielstände in der Sport-Übersicht",
+                                onOff(settings.liveScores),
+                                "Deutsche Profiligen: Stand und Spielminute laufender Spiele, Endstand danach (OpenLigaDB, ohne Konto).",
+                            ) { update { it.copy(liveScores = !it.liveScores) } }
+                        }
+                        item {
+                            SettingRow(
+                                "Tor-Hinweis im Bild",
+                                onOff(settings.goalAlerts),
+                                "Trifft ein Verein, dem du folgst, erscheint beim Schauen kurz der neue Stand (nicht für das Spiel, das gerade läuft).",
+                            ) { update { it.copy(goalAlerts = !it.goalAlerts) } }
+                        }
+                    }
+                    item(key = "group-parental") {
+                        SettingRow(
+                            if (openGroup == "parental") "Kindersicherung  ▾" else "Kindersicherung  ›",
+                            "",
+                            "Gruppen mit PIN sperren.",
+                        ) { openGroup = if (openGroup == "parental") null else "parental" }
+                    }
+                    if (openGroup == "parental") {
+                        item { ParentalSettings() }
+                    }
                 }
                 SettingsPage.DATA -> {
+                    item(key = "group-proxy") {
+                        SettingRow(
+                            if (openGroup == "proxy") "Proxy  ▾" else "Proxy  ›",
+                            settings.proxyMode.label,
+                            "Eigene IP nur für DnA-TV, z. B. aus einem anderen Land: Art, Adresse, Anmeldung und ob Videos darüber laufen.",
+                        ) { openGroup = if (openGroup == "proxy") null else "proxy" }
+                    }
+                    if (openGroup == "proxy") {
+                        item {
+                            SettingRow(
+                                "Proxy",
+                                settings.proxyMode.label,
+                                "Nur DnA-TV läuft über den Proxy, andere Apps und die Handy-Fernbedienung nicht. Fällt der Proxy aus, " +
+                                    "spielt die App nicht heimlich ohne ihn weiter, sondern meldet es.",
+                            ) { update { it.copy(proxyMode = it.proxyMode.cycle()) } }
+                        }
+                        item {
+                            SettingRow("Art", settings.proxyType.label, "Steht beim Anbieter in den Zugangsdaten (HTTP/HTTPS-Proxy oder SOCKS5).") {
+                                update { it.copy(proxyType = it.proxyType.cycle()) }
+                            }
+                        }
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                CredentialField(settings.proxyHost, "Adresse (IP oder Name)", Modifier.weight(2f)) { host ->
+                                    update { it.copy(proxyHost = host) }
+                                }
+                                CredentialField(settings.proxyPort.takeIf { it > 0 }?.toString().orEmpty(), "Port", Modifier.weight(1f), keyboardType = KeyboardType.Number) { port ->
+                                    update { it.copy(proxyPort = port.trim().toIntOrNull() ?: 0) }
+                                }
+                            }
+                        }
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                CredentialField(settings.proxyUser, "Benutzer (falls verlangt)", Modifier.weight(1f)) { user ->
+                                    update { it.copy(proxyUser = user) }
+                                }
+                                CredentialField(settings.proxyPassword, "Passwort", Modifier.weight(1f), password = true) { pw ->
+                                    update { it.copy(proxyPassword = pw) }
+                                }
+                            }
+                        }
+                        if (settings.proxyMode != de.ayutv.data.net.ProxyMode.OFF) item {
+                            SettingRow(
+                                "Videostreams über den Proxy",
+                                onOff(settings.proxyStreams),
+                                "Aus: Nur Anmeldung, Listen und TV-Guide laufen über den Proxy, die Videos direkt. Viele Proxys liefern nur " +
+                                    "10–20 Mbit/s – zu wenig für 4K (Bild hängt, Puffer leer). Der Leitungs-Check zeigt beide Wege im Vergleich. " +
+                                    "Hinweis: Der Anbieter sieht beim direkten Weg deine eigene Adresse.",
+                            ) { update { it.copy(proxyStreams = !it.proxyStreams) } }
+                        }
+                        if (settings.proxyMode == de.ayutv.data.net.ProxyMode.SELECTED) {
+                            item {
+                                Text(
+                                    "Über den Proxy laufen (OK schaltet um):",
+                                    color = AyuColors.TextSecondary,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                                )
+                            }
+                            items(playlists, key = { "proxy-${it.id}" }) { playlist ->
+                                val on = playlist.id.toString() in settings.proxyPlaylists
+                                SettingRow(playlist.name, if (on) "über Proxy" else "direkt", "") {
+                                    update {
+                                        val id = playlist.id.toString()
+                                        it.copy(proxyPlaylists = if (id in it.proxyPlaylists) it.proxyPlaylists - id else it.proxyPlaylists + id)
+                                    }
+                                }
+                            }
+                            if (playlists.isNotEmpty() && settings.proxyPlaylists.none { id -> playlists.any { it.id.toString() == id } }) {
+                                item {
+                                    Text("Noch keine Playlist gewählt: Bis dahin geht alles direkt.", color = AyuColors.Live, fontSize = 14.sp)
+                                }
+                            }
+                        }
+                        if (settings.proxyMode != de.ayutv.data.net.ProxyMode.OFF && !settings.proxyConfig.complete) {
+                            item {
+                                Text("Adresse und Port fehlen noch: Bis dahin geht alles direkt.", color = AyuColors.Live, fontSize = 14.sp)
+                            }
+                        }
+                    }
                     item {
                         SettingRow(
                             "Verschlüsselte Namensauflösung",
@@ -1108,25 +979,225 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                                 "Fehlerbericht und Fernbedienung zwischen Handy-App, Windows und Fire TV sind immer verschlüsselt.",
                         ) { update { it.copy(secureDns = !it.secureDns) } }
                     }
-                    item {
-                        // Alles Wichtige auf diesem Gerät in einer Minute gemessen.
-                        var running by remember { mutableStateOf(false) }
-                        var result by remember { mutableStateOf<String?>(null) }
+                    item(key = "group-tests") {
                         SettingRow(
-                            "Gerät prüfen",
-                            if (running) "misst …" else if (result == null) "Jetzt prüfen" else "",
-                            result ?: "Misst in etwa einer Minute Ruckeln der Menüs, Speicher, Übersetzung pro Zeile, Leitung, Proxy, " +
-                                "DeepL und OpenSubtitles – als kurzer Text zum Abfotografieren.",
-                        ) {
-                            if (running) return@SettingRow
-                            running = true
-                            result = "Messe …"
-                            scope.launch {
-                                result = runCatching {
-                                    de.ayutv.data.DeviceCheck.run(context, container) { line -> result = (result?.takeIf { it != "Messe …" }?.plus("\n") ?: "") + line }
-                                }.getOrElse { "Prüfung abgebrochen: ${it.message}" }
-                                running = false
+                            if (openGroup == "tests") "Prüfen & Testen  ▾" else "Prüfen & Testen  ›",
+                            "",
+                            "Gerät prüfen, Leitungs-Check, 4K-Test, Zugänge, DeepL, Übersetzer, Proxy, Speedtest, IP-Adresse und Testbilder.",
+                        ) { openGroup = if (openGroup == "tests") null else "tests" }
+                    }
+                    if (openGroup == "tests") {
+                        item {
+                            // Alles Wichtige auf diesem Gerät in einer Minute gemessen.
+                            var running by remember { mutableStateOf(false) }
+                            var result by remember { mutableStateOf<String?>(null) }
+                            SettingRow(
+                                "Gerät prüfen",
+                                if (running) "misst …" else if (result == null) "Jetzt prüfen" else "",
+                                result ?: "Misst in etwa einer Minute Ruckeln der Menüs, Speicher, Übersetzung pro Zeile, Leitung, Proxy, " +
+                                    "DeepL und OpenSubtitles – als kurzer Text zum Abfotografieren.",
+                            ) {
+                                if (running) return@SettingRow
+                                running = true
+                                result = "Messe …"
+                                scope.launch {
+                                    result = runCatching {
+                                        de.ayutv.data.DeviceCheck.run(context, container) { line -> result = (result?.takeIf { it != "Messe …" }?.plus("\n") ?: "") + line }
+                                    }.getOrElse { "Prüfung abgebrochen: ${it.message}" }
+                                    running = false
+                                }
                             }
+                        }
+                        item {
+                            // Leitungs-Check: zuletzt geschauter Sender (sonst ein Favorit) einige Sekunden laden und messen.
+                            var running by remember { mutableStateOf(false) }
+                            var result by remember { mutableStateOf<de.ayutv.data.repo.LineCheck.Result?>(null) }
+                            var variants by remember { mutableStateOf<String?>(null) }
+                            var hlsBetter by remember { mutableStateOf(false) }
+                            SettingRow(
+                                "Leitungs-Check",
+                                if (running) "misst …" else "Jetzt messen",
+                                result?.let { r -> r.summary + (variants?.let { "\n$it" } ?: "") + "\nEmpfehlung: Puffer „${r.recommendation.label}“" }
+                                    ?: "Lädt den zuletzt geschauten Sender (ohne Bild) und misst Antwortzeit, Aussetzer und Datenrate, dann alle Fassungen desselben Senders (auch als HLS) und kurz einen Film für die Höchstgeschwindigkeit vom Anbieter. Dauert bis zu einer Minute.",
+                            ) {
+                                if (running) return@SettingRow
+                                running = true
+                                scope.launch {
+                                    val channel = container.db.history().recentLiveKeys(1).firstOrNull()?.let { container.db.channels().byKey(it) }
+                                        ?: container.db.favorites().keys().firstOrNull()?.let { container.db.channels().byKey(it) }
+                                        ?: container.db.channels().all().firstOrNull()
+                                    val check = de.ayutv.data.repo.LineCheck(container.http)
+                                    variants = null
+                                    val live = channel?.let { check.run(it, it.userAgent ?: settings.userAgent) }
+                                    result = live
+                                    // Maximum suchen: alle Fassungen desselben Senders (auch anderer Playlists) und bei Xtream beide
+                                    // Formate je 5 s messen. Die beste wird ab jetzt bei doppelten Sendern bevorzugt.
+                                    hlsBetter = false
+                                    if (channel != null && live != null && live.failed == null) {
+                                        val outcome = de.ayutv.data.repo.VariantCompare(container.db, check)
+                                            .run(channel, settings.userAgent, settings.liveFormat, current = live.kbps.takeIf { de.ayutv.data.repo.VariantCompare.hlsForm(channel.url) == null || settings.liveFormat == LiveFormat.TS })
+                                        hlsBetter = outcome.hlsWins && settings.liveFormat == LiveFormat.TS
+                                        variants = (outcome.text() + (outcome.better?.let { b ->
+                                            "\nSchärfer: „${b.label}“ mit ${"%.1f".format(b.kbps / 1000.0)} Mbit/s" +
+                                                if (b.hls && settings.liveFormat == LiveFormat.TS) " – dafür unter Wiedergabe → Technik das Live-Format auf HLS stellen (oder unten übernehmen)." else " – wird ab jetzt bevorzugt."
+                                        } ?: if (outcome.candidates.size > 1) "\nDie geschaute Fassung ist schon die beste." else "")).ifBlank { null }
+                                    }
+                                    // Dazu die echte Geschwindigkeit vom Anbieter: ein Film wird nicht in Echtzeit, sondern so schnell wie möglich geliefert.
+                                    val movie = runCatching { container.db.vod().search("", 1).firstOrNull() }.getOrNull()
+                                    val provider = movie?.let { check.provider(it.url, settings.userAgent) }
+                                    // Proxy aktiv: denselben Film auch am Proxy vorbei laden – zeigt, ob der Proxy bremst.
+                                    val direct = if (provider != null && de.ayutv.data.net.AppProxy.current.active) {
+                                        movie?.let { check.provider(it.url, settings.userAgent, direct = true) }
+                                    } else null
+                                    val uhd = channel?.let { de.ayutv.data.parse.ChannelQuality.height(it.key, it.name) >= 2_000 } == true
+                                    if (live != null) result = live.copy(providerKbps = provider, directKbps = direct, uhd = uhd)
+                                    running = false
+                                }
+                            }
+                            if (hlsBetter) {
+                                SettingRow("Live-Format auf HLS stellen", "Übernehmen", "Dein Anbieter schickt über HLS eine höhere Datenrate (schärferes Bild) als über MPEG-TS. Dafür gehen Pause und Zurückspulen im Live-Bild nicht.") {
+                                    update { it.copy(liveFormat = LiveFormat.HLS) }
+                                    hlsBetter = false
+                                }
+                            }
+                            result?.takeIf { it.recommendation != settings.bufferProfile }?.let { r ->
+                                SettingRow("Empfehlung übernehmen", r.recommendation.label, "Stellt den Puffer auf „${r.recommendation.label}“.") {
+                                    update { it.copy(bufferProfile = r.recommendation) }
+                                }
+                            }
+                        }
+                        item {
+                            // 4K-Test: mitgelieferter UHD-Clip (HEVC 10 Bit, HDR10, 50 Bilder/s) im normalen Player.
+                            val last = remember { de.ayutv.player.UhdSelfTest.lastResult(context) }
+                            SettingRow(
+                                "4K-Test",
+                                "",
+                                last ?: "Spielt 8 s 4K (HEVC 10 Bit, HDR10, 50 Bilder/s) und zeigt, ob es auf diesem Gerät flüssig läuft",
+                            ) { de.ayutv.player.UhdSelfTest.start(context) }
+                        }
+                        item {
+                            SettingRow(
+                                "Zugänge prüfen",
+                                "",
+                                // Auf dem Handy fehlt die Einrichtungs-Karte, in der das Ergebnis sonst steht: hier zeigen.
+                                if (touch && keyReport != null) keyReport.orEmpty() else "Testet den OpenSubtitles-Zugang sofort.",
+                            ) {
+                                keyReport = "Prüfe …"
+                                scope.launch {
+                                    keyReport = KeyCheck.run(container.http, container.settings.current())
+                                        .joinToString("\n") { (if (it.ok) "✓ " else "✗ ") + it.text }
+                                }
+                            }
+                        }
+                        if (settings.translationProvider == de.ayutv.data.TranslationProvider.DEEPL) item {
+                            var result by remember { mutableStateOf<String?>(null) }
+                            SettingRow(
+                                "DeepL prüfen",
+                                if (result == null) "Jetzt prüfen" else "",
+                                result ?: "Prüft den Schlüssel und zeigt, wie viel vom Monatskontingent schon verbraucht ist.",
+                            ) {
+                                result = "prüft …"
+                                scope.launch {
+                                    result = runCatching {
+                                        val usage = de.ayutv.data.translate.DeepLTranslator(container.http, settings.deeplKey, null).usage()
+                                        val format = java.text.NumberFormat.getIntegerInstance(java.util.Locale.GERMANY)
+                                        "✓ Schlüssel gültig · ${format.format(usage.used)} von ${format.format(usage.limit)} Zeichen in diesem Monat verbraucht"
+                                    }.getOrElse { "✗ ${it.message}" }
+                                }
+                            }
+                        }
+                        item {
+                            var testResult by remember { mutableStateOf("Prüft Texterkennung und Übersetzung auf diesem Gerät") }
+                            SettingRow(
+                                "Übersetzer testen",
+                                "",
+                                testResult,
+                            ) {
+                                testResult = "Läuft … (beim ersten Mal werden die Modelle geladen)"
+                                scope.launch {
+                                    testResult = de.ayutv.data.translate.TranslatorSelfTest.run(settings.subtitleLanguage)
+                                    de.ayutv.data.Diagnostics.saveSelfTest(context, testResult)
+                                    // Übersetzer-Prozess wieder beenden: Speicher frei für die Wiedergabe.
+                                    Translators.remote.release()
+                                }
+                            }
+                        }
+                        item {
+                            var running by remember { mutableStateOf(false) }
+                            var result by remember { mutableStateOf<de.ayutv.data.net.ProxyCheck.Result?>(null) }
+                            SettingRow(
+                                "Proxy testen",
+                                when {
+                                    running -> "prüft …"
+                                    result?.ok == true -> "✓"
+                                    result != null -> "✗"
+                                    else -> "Jetzt prüfen"
+                                },
+                                result?.summary() ?: "Zeigt, mit welcher IP und aus welchem Land der Stick direkt und über den Proxy zu sehen ist.",
+                            ) {
+                                if (running) return@SettingRow
+                                running = true
+                                scope.launch {
+                                    result = de.ayutv.data.net.ProxyCheck.run(container.http, settings.proxyConfig)
+                                    running = false
+                                }
+                            }
+                        }
+                        if (settings.proxyConfig.complete) item {
+                            // Speedtest: Ping und Geschwindigkeit über den Proxy und direkt (neutraler Messserver, eine Verbindung).
+                            var phase by remember { mutableStateOf<String?>(null) }
+                            var result by remember { mutableStateOf(de.ayutv.data.net.ProxySpeedTest.last) }
+                            SettingRow(
+                                "Proxy-Speedtest",
+                                phase?.let { "misst $it" } ?: "Jetzt messen",
+                                result?.summary()
+                                    ?: "Misst Ping und Geschwindigkeit über den Proxy und zum Vergleich direkt, je etwa 10 Sekunden über eine " +
+                                        "Verbindung wie bei einem Videostream. Die schwächste Sekunde zeigt, ob 4K oder Full HD ohne Hänger " +
+                                        "durchkommt. Verbraucht bis zu 300 MB, vorher die Wiedergabe beenden.",
+                            ) {
+                                if (phase != null) return@SettingRow
+                                phase = "…"
+                                scope.launch {
+                                    result = de.ayutv.data.net.ProxySpeedTest.run(container.http, settings.proxyConfig) { phase = it }
+                                    phase = null
+                                }
+                            }
+                        }
+                        item {
+                            // „Wie ist meine IP?“: direkt und, wenn eingeschaltet, über den Proxy.
+                            var running by remember { mutableStateOf(false) }
+                            var result by remember { mutableStateOf<String?>(null) }
+                            SettingRow(
+                                "Meine IP-Adresse",
+                                if (running) "prüft …" else if (result == null) "Jetzt prüfen" else "",
+                                result ?: "Zeigt, mit welcher IP und aus welchem Land der Fire TV im Internet zu sehen ist – direkt und über den Proxy.",
+                            ) {
+                                if (running) return@SettingRow
+                                running = true
+                                scope.launch {
+                                    val check = de.ayutv.data.net.ProxyCheck.run(container.http, settings.proxyConfig)
+                                    result = if (settings.proxyConfig.active) check.summary()
+                                    else "Direkt: " + (check.direct?.let { "${it.country} · ${it.ip}" } ?: "nicht ermittelt") + "\nProxy: aus"
+                                    running = false
+                                }
+                            }
+                        }
+                        item {
+                            SettingRow(
+                                "Testbild: Ton-Bild-Abgleich",
+                                "",
+                                "Piepton und weißer Blitz im Sekundentakt – so lange „Ton später“ oder „früher“ drücken, bis beide " +
+                                    "genau zusammenfallen. Genauer als nach Gefühl beim Film.",
+                            ) { avTest = true }
+                        }
+                        // Handy mit HDR-Display: wie der eigene Software-Decoder (4K) HDR10 ausgibt – per Testbild gewählt.
+                        if (touch && hdrPhone) item {
+                            SettingRow(
+                                "HDR im eigenen Decoder (Testbild)",
+                                de.ayutv.player.dna.engine.HdrVariant.entries.firstOrNull { it.name == settings.hdrVariant }?.label ?: "Aus",
+                                "Läuft 4K HDR im eigenen Software-Decoder (wenn der des Handys scheitert), wird es bisher nach SDR " +
+                                    "umgerechnet. Im Testbild zeigt sich, welche HDR-Ausgabe dieses Handy richtig darstellt – die wählen.",
+                            ) { hdrTest = true }
                         }
                     }
                     item {
@@ -1152,25 +1223,6 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                                     "Frei: " + de.ayutv.data.StorageCleaner.format(de.ayutv.data.StorageCleaner.freeBytes(context)) +
                                         de.ayutv.data.StorageCleaner.usage(context).joinToString("") { "\n${it.label}: ${de.ayutv.data.StorageCleaner.format(it.bytes)}" }
                                 }
-                            }
-                        }
-                    }
-                    item {
-                        // „Wie ist meine IP?“: direkt und, wenn eingeschaltet, über den Proxy.
-                        var running by remember { mutableStateOf(false) }
-                        var result by remember { mutableStateOf<String?>(null) }
-                        SettingRow(
-                            "Meine IP-Adresse",
-                            if (running) "prüft …" else if (result == null) "Jetzt prüfen" else "",
-                            result ?: "Zeigt, mit welcher IP und aus welchem Land der Fire TV im Internet zu sehen ist – direkt und über den Proxy.",
-                        ) {
-                            if (running) return@SettingRow
-                            running = true
-                            scope.launch {
-                                val check = de.ayutv.data.net.ProxyCheck.run(container.http, settings.proxyConfig)
-                                result = if (settings.proxyConfig.active) check.summary()
-                                else "Direkt: " + (check.direct?.let { "${it.country} · ${it.ip}" } ?: "nicht ermittelt") + "\nProxy: aus"
-                                running = false
                             }
                         }
                     }
@@ -1737,12 +1789,10 @@ private fun PhoneSetupCard(state: PhoneSetupServer.State, report: String?) {
 /** Bereiche der Einstellungen (linke Spalte). */
 private enum class SettingsPage(val title: String, val description: String, val icon: String) {
     PLAYLISTS("Playlists", "Anbieter hinzufügen, ein- und ausschalten, Gruppen wählen", "☰"),
-    PLAYBACK("Wiedergabe", "Puffer, Bild, Ton und Stabilität", "▶"),
-    PROXY("Proxy", "Eigene IP nur für DnA-TV, z. B. aus einem anderen Land", "🌐"),
-    SUBTITLES("Untertitel", "Sprachen, Größe, Übersetzung auf dem Gerät", "💬"),
-    DISPLAY("Bedienung & TV-Guide", "Umschalten, Programmführer, Zeitverschiebung", "📺"),
-    PARENTAL("Kindersicherung", "Gruppen mit PIN sperren", "🔒"),
-    DATA("Daten & Info", "Verlauf, Speicher, Version", "ⓘ"),
+    PLAYBACK("Wiedergabe", "Puffer, Bild und Ton", "▶"),
+    SUBTITLES("Untertitel & Übersetzung", "Sprache, Aussehen, OpenSubtitles, DeepL", "💬"),
+    DISPLAY("Bedienung", "Umschalten, TV-Guide, Aussehen, Sport, Kindersicherung", "📺"),
+    DATA("Netz & Daten", "Proxy, Prüfen & Testen, Speicher, Version, Fehlerbericht", "🌐"),
 }
 
 @Composable

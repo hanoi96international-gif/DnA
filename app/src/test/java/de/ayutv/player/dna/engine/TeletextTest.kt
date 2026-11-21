@@ -109,6 +109,15 @@ class TeletextTest {
     }
 
     @Test
+    fun signalledPageMissingFallsBackToSubtitlePage() {
+        // Der Anbieter gibt Tafel 150 an, sendet die Untertitel aber auf 777.
+        val decoder = TeletextDecoder(0x150, "deu")
+        repeat(2000) { decoder.decode(pes(header(0x777), row(7, 22, "Noch nicht"))) }
+        assertEquals(0x777, decoder.page)
+        assertEquals("Jetzt", decoder.decode(pes(header(0x777), row(7, 22, "Jetzt"))))
+    }
+
+    @Test
     fun textOutsideBoxIsHidden() {
         val decoder = TeletextDecoder(0x150, "deu")
         val d = ByteArray(40) { char(' '.code) }
