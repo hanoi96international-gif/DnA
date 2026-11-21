@@ -1163,6 +1163,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.subtitleItems(activit
         item {
             OptionRow(option.label, option.selected && !activity.textDisabled && !activity.ownSubtitles) {
                 activity.selectTrack(option.group, option.index)
+                // Bei Sendern von Hand eine Spur gewählt: Untertitel bei Sendern wieder automatisch.
+                if (activity.isLive) activity.setLiveSubtitlesAuto(true)
             }
         }
     }

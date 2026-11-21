@@ -178,6 +178,11 @@ data class AppSettings(
     val subtitleLanguage: String = "en",
     /** Untertitel sind optional: standardmäßig aus, einschalten im Player über die Menütaste. */
     val subtitlesAutoOn: Boolean = false,
+    /**
+     * Live-TV: Untertitel der Sender (Videotext, DVB) automatisch zeigen bzw. übersetzen – nur zusammen mit
+     * [subtitlesAutoOn]. „Aus“ im Untertitel-Menü eines Senders schaltet das ab (gilt dann für alle Sender).
+     */
+    val liveSubtitlesAuto: Boolean = true,
     val subtitleSize: SubtitleSize = SubtitleSize.LARGE,
     val subtitleColor: SubtitleColor = SubtitleColor.WHITE,
     val subtitleBackground: SubtitleBackground = SubtitleBackground.OUTLINE,
@@ -305,6 +310,7 @@ class SettingsStore(private val context: Context) {
         val appsHidden = stringPreferencesKey("apps_hidden")
         val subLang = stringPreferencesKey("subtitle_language_code")
         val subAuto = booleanPreferencesKey("subtitles_auto_on")
+        val liveSubAuto = booleanPreferencesKey("live_subtitles_auto")
         val provider = stringPreferencesKey("translation_provider")
         val subSize = stringPreferencesKey("subtitle_size")
         val subColor = stringPreferencesKey("subtitle_color")
@@ -458,6 +464,7 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.appsHidden] = next.appsHidden
             prefs[Keys.subLang] = next.subtitleLanguage
             prefs[Keys.subAuto] = next.subtitlesAutoOn
+            prefs[Keys.liveSubAuto] = next.liveSubtitlesAuto
             prefs[Keys.provider] = next.translationProvider.name
             prefs[Keys.subSize] = next.subtitleSize.name
             prefs[Keys.subColor] = next.subtitleColor.name
@@ -533,6 +540,7 @@ class SettingsStore(private val context: Context) {
         appsHidden = this[Keys.appsHidden] ?: "",
         subtitleLanguage = this[Keys.subLang]?.takeIf { Languages.of(it) != null } ?: "en",
         subtitlesAutoOn = this[Keys.subAuto] ?: false,
+        liveSubtitlesAuto = this[Keys.liveSubAuto] ?: true,
         translationProvider = enumOrDefault(this[Keys.provider], TranslationProvider.ON_DEVICE),
         subtitleSize = enumOrDefault(this[Keys.subSize], SubtitleSize.LARGE),
         subtitleColor = enumOrDefault(this[Keys.subColor], SubtitleColor.WHITE),

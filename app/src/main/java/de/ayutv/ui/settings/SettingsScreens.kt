@@ -549,6 +549,14 @@ fun SettingsScreen(onAddPlaylist: () -> Unit, onManageGroups: (PlaylistEntity) -
                             "Aus: Untertitel nur bei Bedarf im Film über die Menütaste ☰. An: bevorzugte Sprache startet mit.",
                         ) { update { it.copy(subtitlesAutoOn = !it.subtitlesAutoOn) } }
                     }
+                    if (settings.subtitlesAutoOn) item {
+                        SettingRow(
+                            "Auch bei Sendern (Live-TV)",
+                            onOff(settings.liveSubtitlesAuto),
+                            "An: Untertitel der Sender (Videotext 150/777, DVB) starten mit, in anderer Sprache live übersetzt. " +
+                                "Aus: Bei Sendern nur über ☰ → Untertitel. „Aus“ im Untertitel-Menü eines Senders schaltet das hier auch ab.",
+                        ) { update { it.copy(liveSubtitlesAuto = !it.liveSubtitlesAuto) } }
+                    }
                     item {
                         SettingRow(
                             "Bevorzugte Sprache",

@@ -1715,7 +1715,7 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun maybeAutoLiveSubtitles() {
         val key = playing?.key ?: return
-        if (!settings.subtitlesAutoOn || castingRemote || autoLiveSubtitlesFor == key || textTracks().isEmpty()) return
+        if (!settings.subtitlesAutoOn || !settings.liveSubtitlesAuto || castingRemote || autoLiveSubtitlesFor == key || textTracks().isEmpty()) return
         autoLiveSubtitlesFor = key
         val language = settings.subtitleLanguage
         if (hasTextTrack(language)) {
@@ -3534,6 +3534,17 @@ class PlayerActivity : ComponentActivity() {
             .build()
         textDisabled = !enabled
         if (!enabled) stopLiveTranslation()
+        // Live-TV: „Aus“ gilt für alle Sender (wie bei Filmen bleibt es aus) – sonst schaltete der nächste Sender die
+        // Untertitel automatisch wieder ein. Wieder an: eine Spur im Untertitel-Menü wählen oder in den Einstellungen.
+        if (isLive) setLiveSubtitlesAuto(enabled)
+    }
+
+    /** Live-TV: Untertitel bei Sendern automatisch (gespeichert, gilt für alle Sender). */
+    fun setLiveSubtitlesAuto(enabled: Boolean) {
+        if (settings.liveSubtitlesAuto == enabled) return
+        settings = settings.copy(liveSubtitlesAuto = enabled)
+        container.scope.launch { container.settings.update { it.copy(liveSubtitlesAuto = enabled) } }
+        if (!enabled) subtitleStatus = "Untertitel bei Sendern aus – wieder an über ☰ → Untertitel oder in den Einstellungen"
     }
 
     /** Player-Menü öffnen: Übersicht, oder gleich eine Unterseite (Untertitel-Taste → Untertitel). */
