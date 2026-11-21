@@ -2108,7 +2108,8 @@ class DnaEngineCore(
 
     /** Der gewählte Tonweg versagt (Decoder stumm, Tonausgabe nimmt nichts an): auf den nächsten wechseln. */
     /** [hard]: die Tonausgabe meldet einen echten Fehler (nicht nur „spielt noch nicht“ – das kann auch ein langsames HDMI sein). */
-    private class AudioPathFailed(message: String, val hard: Boolean = false) : Exception(message)
+    /** [deadOutput]: Die Tonausgabe selbst ist weg (ERROR_DEAD_OBJECT), nicht der Tonweg kaputt. */
+    private class AudioPathFailed(message: String, val hard: Boolean = false, val deadOutput: Boolean = false) : Exception(message)
 
     private fun audioLoop(gen: Int, previous: Thread? = null) {
         var decoder: MediaCodec? = null
@@ -2138,6 +2139,8 @@ class DnaEngineCore(
         var playingSinceMs = 0L
         /** Vom vorigen Sender übernommene Tonausgabe (Durchreichen), siehe [ParkedOutput]. */
         var reusedTrack: AudioTrack? = null
+        /** Schon einmal eine vom System geschlossene Tonausgabe fürs Durchreichen neu angelegt (nur einmal je Sender). */
+        var deadOutputRetried = false
         fun releaseAll(park: Boolean = false) {
             // Erst die Uhr lösen, dann freigeben (sonst fragt die Anzeige eine freigegebene Tonausgabe ab).
             clock.audio = null
@@ -2236,6 +2239,9 @@ class DnaEngineCore(
                 val n = if (tunnelActive && android.os.Build.VERSION.SDK_INT >= 23) {
                     t.write(data, data.remaining(), AudioTrack.WRITE_NON_BLOCKING, ptsUs * 1000)
                 } else t.write(data, data.remaining(), AudioTrack.WRITE_NON_BLOCKING)
+                // -6 (ERROR_DEAD_OBJECT): Android hat die Tonausgabe unter uns geschlossen (HDMI/Soundbar hat neu verhandelt,
+                // eine übernommene Tonausgabe wurde ungültig). Das Durchreichen selbst klappt – neu anlegen statt aufgeben.
+                if (n == AudioTrack.ERROR_DEAD_OBJECT) throw AudioPathFailed("Tonausgabe meldet Fehler $n", deadOutput = true)
                 if (n < 0) throw AudioPathFailed("Tonausgabe meldet Fehler $n", hard = true)
                 if (n > 0) {
                     stalledSinceMs = 0L
@@ -2303,7 +2309,7 @@ class DnaEngineCore(
             setBuffering(false)
         }
         /** Der laufende Tonweg versagt: den nächsten nehmen (Durchreichen → Decoder des Geräts → eigener Decoder → ohne Ton). */
-        fun switchPath(reason: String, hard: Boolean) {
+        fun switchPath(reason: String, hard: Boolean, deadOutput: Boolean = false) {
             val codec = codecTrack?.codec
             val wasPassthrough = passthroughMode
             val wasDevice = decoder != null
@@ -2313,6 +2319,13 @@ class DnaEngineCore(
             joinLate = clock.started
             DnaLog.w(TAG, "Ton: $reason ($name)")
             when {
+                // Tonausgabe von Android geschlossen (Kurzbericht Fire TV 21.11., 12:52: übernommene Dolby-Tonausgabe nach
+                // 5 s „Fehler -6“): Bisher galt Durchreichen danach für die ganze Sitzung als kaputt – der Ton lief nur noch
+                // im Gerät dekodiert. Einmal je Sender mit einer frischen Tonausgabe weiter durchreichen.
+                wasPassthrough && deadOutput && !deadOutputRetried -> {
+                    deadOutputRetried = true
+                    DnaLog.i(TAG, "Ton: Tonausgabe wurde vom System geschlossen – Durchreichen mit neuer Tonausgabe")
+                }
                 wasPassthrough -> {
                     avoidPassthrough = true
                     // Für die ganze Sitzung abschalten nur bei echtem Fehler oder wiederholtem Hängen – nicht wegen eines
@@ -2551,7 +2564,8 @@ class DnaEngineCore(
                     if (!alive(gen)) break
                     // Jeder Fehler im Tonweg (Decoder, Tonausgabe, Format) führt zum nächsten Weg, nie zum Stillstand.
                     switchPath(if (e is AudioPathFailed) e.message ?: "gestört" else "${e.javaClass.simpleName}${e.message?.let { " $it" } ?: ""}",
-                        hard = e !is AudioPathFailed || e.hard)
+                        hard = e !is AudioPathFailed || e.hard || (e.deadOutput && deadOutputRetried),
+                        deadOutput = e is AudioPathFailed && e.deadOutput)
                 }
             }
         } catch (e: InterruptedException) {
