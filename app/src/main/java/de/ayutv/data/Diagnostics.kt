@@ -129,7 +129,7 @@ object Diagnostics {
         section("Einstellungen")
         runCatching {
             val s = container.settings.current()
-            out.append("Puffer ${s.bufferProfile}${if (s.filmDiskBuffer) " + Film-Vorrat" else ""}, Live ${s.liveFormat}, Player DNA Engine, Bildrate ${s.matchFrameRate}${if (s.frameRateFilmsOnly) " (nur Filme)" else ""}, Ton ${s.audioOutput}\n")
+            out.append("Puffer ${s.bufferProfile}${if (s.filmDiskBuffer) " + Film-Vorrat" else ""}, Live ${s.liveFormat}, Player DNA Engine, Bildrate ${s.matchFrameRate}${if (s.frameRateFilmsOnly) " (nur Filme)" else ""}, Halbbilder ${if (s.deinterlace) "An" else "Aus"}, Ton ${s.audioOutput}\n")
             out.append("Bildrand ${s.screenMargin.label}, Ton-Bild-Abgleich ${de.ayutv.data.avSyncLabel(s.avSyncMs)}, HDR-Ausgabe ${s.hdrVariant.ifEmpty { "SDR" }}\n")
             out.append("Untertitel ${s.subtitleLanguage}, automatisch ${s.subtitlesAutoOn}, OpenSubtitles ${s.onlineSubtitles}" +
                 " (eigener Schlüssel ${s.openSubtitlesKey.isNotBlank()}, Konto ${s.openSubtitlesUser.isNotBlank()})\n")
