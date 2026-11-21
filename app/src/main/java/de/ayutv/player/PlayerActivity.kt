@@ -1173,8 +1173,17 @@ class PlayerActivity : ComponentActivity() {
 
     /** Für „Best of“: wie lange der Sender lief und wie oft dabei die Verbindung abbrach. Erst ab einer Minute. */
     private fun recordWatch() {
+        // Filme und Serien auch ins Wiedergabe-Protokoll (ab 10 s): Kurzbericht 21.11. – der Fernseher hing beim Start
+        // einer 4K-Serie, im Bericht stand davon nichts (nur Sender wurden gezählt).
+        if (!isLive) {
+            if (watchStartedAt == 0L) return
+            val watched = SystemClock.elapsedRealtime() - watchStartedAt
+            watchStartedAt = 0L
+            if (watched >= 10_000 && vodTitle.isNotBlank()) logWatch(de.ayutv.data.parse.WatchLog.VOD_PREFIX + vodTitle, watched)
+            return
+        }
         val channel = playing ?: return
-        if (!isLive || watchStartedAt == 0L) return
+        if (watchStartedAt == 0L) return
         val watched = SystemClock.elapsedRealtime() - watchStartedAt
         watchStartedAt = 0L
         // Datenrate des Senders merken (ab 20 s Schauen ist die Schätzung eingeschwungen): Bei doppelten Sendern gewinnt
@@ -1198,7 +1207,9 @@ class PlayerActivity : ComponentActivity() {
             route = routeLabel().removePrefix("Weg: "), net = watchNet, worstRssi = watchWorstRssi,
             audio = if (stats.audioCodec.isBlank()) "" else listOfNotNull(
                 stats.audioCodec, stats.audioChannels.takeIf { it > 0 }?.let { "${it}ch" },
-                if (stats.audioDecoder.isNotBlank()) "im Gerät" else "durchgereicht",
+                // Durchreichen hat auch einen Namen („Durchreichen an Receiver (AC3)“) – zählte bisher als „im Gerät“
+                // (Kurzbericht 21.11.: alle 17 Sender „Ton im Gerät dekodiert“, obwohl Dolby durchgereicht wurde).
+                if (stats.audioDecoder.isBlank() || stats.audioDecoder.startsWith("Durchreichen")) "durchgereicht" else "im Gerät",
             ).joinToString(" "),
             lastError = watchLastError,
         )
@@ -1598,6 +1609,9 @@ class PlayerActivity : ComponentActivity() {
 
     private fun startVod(request: VodRequest, resumeMs: Long) {
         val p = ensureEngineFor(request.key, request.title) ?: return
+        watchStartedAt = SystemClock.elapsedRealtime()
+        watchErrorsAtStart = playerErrors
+        resetWatchStats()
         if (castTarget == null && activeTv == null) freeConnection()
         // Neuer Film/neue Folge: auf dem Fernseher an derselben Stelle wie hier beginnen.
         castStartPositionMs = resumeMs
