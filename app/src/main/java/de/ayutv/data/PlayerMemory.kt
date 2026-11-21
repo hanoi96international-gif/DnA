@@ -44,6 +44,22 @@ class PlayerMemory(context: Context) {
         sources.edit().apply { if (source == null) remove(key) else putString(key, source) }.apply()
     }
 
+    private val avSync = context.getSharedPreferences("av_sync", Context.MODE_PRIVATE)
+
+    /**
+     * Ton-Bild-Abgleich je Sender bzw. Film/Serie (ms, positiv: Ton später), zusätzlich zum Wert für das Gerät. Manche
+     * Anbieter rechnen Sender neu um (etwa „RTL HEVC“: AAC mono 44,1 kHz) und versetzen dabei Ton und Bild fest
+     * gegeneinander – das gilt dann nur für diesen Sender. Einmal eingestellt, wendet der Player ihn immer selbst an.
+     */
+    fun avSync(key: String): Int = avSync.getInt(key, 0)
+
+    fun setAvSync(key: String, ms: Int) {
+        avSync.edit().apply { if (ms == 0) remove(key) else putInt(key, ms) }.apply()
+    }
+
+    /** Wie viele Sender/Filme einen eigenen Abgleich haben (Kurzbericht). */
+    val avSyncCount: Int get() = avSync.all.size
+
     private val rates = context.getSharedPreferences("frame_rates", Context.MODE_PRIVATE)
 
     /**

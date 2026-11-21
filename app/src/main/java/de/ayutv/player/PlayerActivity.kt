@@ -406,7 +406,7 @@ class PlayerActivity : ComponentActivity() {
             enhance.leveling = settings.loudnessLevel
             loudnessLevel = settings.loudnessLevel
             avSyncMs = settings.avSyncMs
-            de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = settings.avSyncMs * 1000L
+            applyAvSync()
             de.ayutv.player.dna.engine.DnaEngineCore.hdrVariant =
                 de.ayutv.player.dna.engine.HdrVariant.entries.firstOrNull { it.name == settings.hdrVariant }
             textDisabled = vod != null && !settings.subtitlesAutoOn
@@ -1337,6 +1337,7 @@ class PlayerActivity : ComponentActivity() {
         // Bildwiederholrate NICHT zurücksetzen: Sonst schaltet der Fernseher bei jedem Zappen zweimal
         // um (zurück auf Standard, dann wieder auf 50 Hz) und wird jedes Mal kurz schwarz.
 
+        loadSourceAvSync()
         val url = adaptLiveUrl(channel.url)
         leaveTimeshift()
         // Läuft es auf einem Fernseher, spielt das Handy nicht mit: Es ist dann die Fernbedienung, und viele Konten
@@ -1609,6 +1610,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun startVod(request: VodRequest, resumeMs: Long) {
         val p = ensureEngineFor(request.key, request.title) ?: return
+        loadSourceAvSync()
         watchStartedAt = SystemClock.elapsedRealtime()
         watchErrorsAtStart = playerErrors
         resetWatchStats()
@@ -5297,16 +5299,42 @@ class PlayerActivity : ComponentActivity() {
     /** Bildrate anpassen – bei „nur Filme“ nicht im Live-TV (Beamer: kein Schwarzbild beim Umschalten). */
     private val afrActive: Boolean get() = settings.matchFrameRate && !(isLive && settings.frameRateFilmsOnly)
 
-    /** Ton-Bild-Abgleich in ms (positiv: Ton später). Wirkt sofort und gilt für dieses Gerät. */
+    /** Ton-Bild-Abgleich für das Gerät in ms (positiv: Ton später), aus den Einstellungen – gilt für alle Sender. */
     var avSyncMs by mutableStateOf(0); private set
 
-    fun shiftAvSync(deltaMs: Int) = setAvSync(avSyncMs + deltaMs)
+    /** Zusätzlicher Abgleich nur für diesen Sender bzw. Film/Serie (gemerkt, beim nächsten Mal automatisch). */
+    var sourceAvSyncMs by mutableStateOf(0); private set
 
+    /** Was gerade wirkt: Gerät + dieser Sender. */
+    val effectiveAvSyncMs: Int get() = (avSyncMs + sourceAvSyncMs).coerceIn(de.ayutv.data.AV_SYNC_MIN_MS, de.ayutv.data.AV_SYNC_MAX_MS)
+
+    /** Im Player: Abgleich für diesen Sender/Film verschieben (wird gemerkt). */
+    fun shiftAvSync(deltaMs: Int) = setSourceAvSync(sourceAvSyncMs + deltaMs)
+
+    fun setSourceAvSync(ms: Int) {
+        val value = ms.coerceIn(de.ayutv.data.AV_SYNC_MIN_MS - avSyncMs, de.ayutv.data.AV_SYNC_MAX_MS - avSyncMs)
+        sourceAvSyncMs = value
+        memoryKey()?.let { container.playerMemory.setAvSync(it, value) }
+        applyAvSync()
+    }
+
+    /** Abgleich für das ganze Gerät (Einstellungen). */
     fun setAvSync(ms: Int) {
         val value = ms.coerceIn(de.ayutv.data.AV_SYNC_MIN_MS, de.ayutv.data.AV_SYNC_MAX_MS)
         avSyncMs = value
-        de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = value * 1000L
+        applyAvSync()
         container.scope.launch { container.settings.update { it.copy(avSyncMs = value) } }
+    }
+
+    /** Beim Start jedes Senders/Films: gemerkten Abgleich dieses Senders laden und zusammen mit dem des Geräts anwenden. */
+    private fun loadSourceAvSync() {
+        sourceAvSyncMs = memoryKey()?.let { container.playerMemory.avSync(it) } ?: 0
+        applyAvSync()
+        if (effectiveAvSyncMs != 0) de.ayutv.player.dna.engine.DnaLog.i(TAG, "Ton-Bild-Abgleich: ${de.ayutv.data.avSyncLabel(effectiveAvSyncMs)} (Gerät ${avSyncMs} ms, dieser Sender ${sourceAvSyncMs} ms)")
+    }
+
+    private fun applyAvSync() {
+        de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = effectiveAvSyncMs * 1000L
     }
 
     fun chooseAudioMode(mode: AudioMode) {
