@@ -191,6 +191,16 @@ object Diagnostics {
             if (prefixes.isNotEmpty()) out.append("Einträge je Playlist-Nr.: ${prefixes.entries.joinToString { "${it.key}: ${it.value}" }}\n")
         }
 
+        // Kurzbericht: nur das Untertitel-Protokoll (Suche, Download, Ausrichtung mit Uhrzeit) – daran sieht man, wo es
+        // bei einem Film lange dauert.
+        if (short) runCatching {
+            val journal = de.ayutv.data.repo.SubtitleJournal.lines()
+            if (journal.isNotEmpty()) {
+                section("Untertitel")
+                container.subtitles.lastProblem?.let { out.append("Letztes Problem: $it\n") }
+                journal.takeLast(30).forEach { out.append("  ").append(it).append('\n') }
+            }
+        }
         if (!short) section("Untertitel")
         if (!short) runCatching {
             out.append("OpenSubtitles: ${de.ayutv.data.repo.OpenSubtitlesQuota.daily.takeIf { it > 0 }?.let { "$it Downloads am Tag" } ?: "Kontingent unbekannt"}\n")

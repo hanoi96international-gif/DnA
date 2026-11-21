@@ -567,7 +567,7 @@ class DnaEnginePlayer(
     companion object {
         private const val AUDIO_PREFIX = "dna-audio-"
         private const val TEXT_PREFIX = "dna-text-"
-        private val TEXT_SUPPORTED = setOf(Codec.SRT, Codec.ASS, Codec.WEBVTT, Codec.TX3G, Codec.PGS, Codec.DVBSUB)
+        private val TEXT_SUPPORTED = setOf(Codec.SRT, Codec.ASS, Codec.WEBVTT, Codec.TX3G, Codec.PGS, Codec.DVBSUB, Codec.TELETEXT)
 
         private val COMMANDS = Player.Commands.Builder().addAll(
             Player.COMMAND_PLAY_PAUSE,

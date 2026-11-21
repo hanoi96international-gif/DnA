@@ -190,6 +190,14 @@ class TsDemuxer(private val output: Output) {
                     (descriptors.ancillaryPage shr 8).toByte(), descriptors.ancillaryPage.toByte())
                 Track(pid, codec, descriptors.subtitleLanguage ?: descriptors.language,
                     label = if (descriptors.subtitlingType in 0x20..0x25) "Hörgeschädigte" else null, extra = pages)
+            } else if (codec == Codec.TELETEXT) {
+                // Für alle Sender: Ist keine Untertitel-Tafel angegeben, sucht der Leser selbst die als Untertitel
+                // gekennzeichnete Tafel (meist 150 oder 777).
+                val page = descriptors.teletextPage
+                Track(pid, codec, descriptors.teletextLanguage ?: descriptors.language ?: "deu",
+                    label = (if (page != 0) "Videotext ${TeletextDecoder.pageLabel(page)}" else "Videotext") +
+                        (if (descriptors.teletextHearing) " (Hörgeschädigte)" else ""),
+                    extra = byteArrayOf((page shr 8).toByte(), page.toByte()))
             } else Track(pid, codec, descriptors.language)
             tracks += track
             val existing = streams[pid]
@@ -205,6 +213,8 @@ class TsDemuxer(private val output: Output) {
         val subtitle: Boolean = false, val subtitleLanguage: String? = null, val subtitlingType: Int = 0,
         val compositionPage: Int = 0, val ancillaryPage: Int = 0,
         val dts: Boolean = false,
+        /** Videotext (Deskriptor 0x56/0x46): Untertitel-Tafel (0x150 …, 0 = keine angegeben), Sprache, für Hörgeschädigte. */
+        val teletext: Boolean = false, val teletextPage: Int = 0, val teletextLanguage: String? = null, val teletextHearing: Boolean = false,
     ) {
         companion object {
             fun parse(d: ByteArray, from: Int, to: Int): Descriptors {
@@ -219,6 +229,10 @@ class TsDemuxer(private val output: Output) {
                 var compositionPage = 0
                 var ancillaryPage = 0
                 var dts = false
+                var teletext = false
+                var teletextPage = 0
+                var teletextLanguage: String? = null
+                var teletextHearing = false
                 var i = from
                 while (i + 2 <= to) {
                     val tag = d[i].toInt() and 0xFF
@@ -229,6 +243,26 @@ class TsDemuxer(private val output: Output) {
                         0x0A -> if (len >= 4) {
                             language = String(d, body, 3, Charsets.ISO_8859_1).trim().lowercase().takeIf { it.isNotBlank() }
                             audioType = d[body + 3].toInt() and 0xFF
+                        }
+                        // Videotext: je 5 Byte Sprache, Art (5 Bit) + Magazin (3 Bit), Seite (BCD). Art 2 = Untertitel,
+                        // 5 = Untertitel für Hörgeschädigte. Die erste Untertitel-Tafel zählt (deutsche bevorzugt).
+                        0x56, 0x46 -> {
+                            teletext = true
+                            var k = body
+                            while (k + 5 <= body + len) {
+                                val type = (d[k + 3].toInt() and 0xFF) shr 3
+                                val magazine = d[k + 3].toInt() and 0x07
+                                val lang = String(d, k, 3, Charsets.ISO_8859_1).trim().lowercase().takeIf { it.isNotBlank() }
+                                if (type == 2 || type == 5) {
+                                    val german = lang == "deu" || lang == "ger"
+                                    if (teletextPage == 0 || (german && teletextLanguage != "deu" && teletextLanguage != "ger")) {
+                                        teletextPage = TeletextDecoder.pageFromDescriptor(magazine, d[k + 4].toInt() and 0xFF)
+                                        teletextLanguage = lang
+                                        teletextHearing = type == 5
+                                    }
+                                }
+                                k += 5
+                            }
                         }
                         0x6A -> ac3 = true
                         0x7B -> dts = true
@@ -244,7 +278,8 @@ class TsDemuxer(private val output: Output) {
                     }
                     i = body + len
                 }
-                return Descriptors(language, audioType, ac3, eac3, registration, subtitle, subtitleLanguage, subtitlingType, compositionPage, ancillaryPage, dts)
+                return Descriptors(language, audioType, ac3, eac3, registration, subtitle, subtitleLanguage, subtitlingType, compositionPage, ancillaryPage, dts,
+                    teletext, teletextPage, teletextLanguage, teletextHearing)
             }
         }
     }
@@ -264,6 +299,7 @@ class TsDemuxer(private val output: Output) {
             desc.eac3 || desc.registration == "EAC3" -> Codec.EAC3
             desc.ac3 || desc.registration == "AC-3" -> Codec.AC3
             desc.subtitle -> Codec.DVBSUB
+            desc.teletext -> Codec.TELETEXT
             else -> null
         }
         else -> null
