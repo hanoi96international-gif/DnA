@@ -1925,7 +1925,11 @@ class DnaEngineCore(
                 // Zu spät, aber gerade erst ein Bild gezeigt: verwerfen. Sonst lieber spät zeigen als stehen bleiben.
                 // (0.61.26 zeigte bei „langsamem“ Decoder Bilder bis 0,3 s zu spät: Der Fire-TV-Decoder lieferte zeitweise
                 // 95 % Echtzeit und galt damit als langsam – Bild lief dauerhaft bis 0,3 s hinter dem Ton. Wieder entfernt.)
-                firstFrameShown && earlyUs < -LATE_US && nowNs - lastRenderNs < MIN_FRAME_GAP_NS -> {
+                // Nicht, solange Bilder ohne Bezug ausgelassen werden (Decoder gemessen zu langsam): Ein fertig dekodiertes Bild
+                // zu verwerfen spart keine Decoder-Arbeit, es fehlt nur auf dem Bildschirm. Rundgang 22.11.: Decoder 73 %, nur
+                // 72 von 250 Bildern gezeigt (14 Bilder/s), 103 fertige verworfen. Den Rückstand bauen das Auslassen vor dem
+                // Dekodieren und – ab CATCH_UP_US – der Sprung zum Schlüsselbild ab.
+                firstFrameShown && earlyUs < -LATE_US && nowNs - lastRenderNs < MIN_FRAME_GAP_NS && !hurryInput -> {
                     droppedFrames++
                     droppedLate++
                     codec.releaseOutputBuffer(index, false)
