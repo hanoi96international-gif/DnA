@@ -1220,6 +1220,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.subtitleItems(activit
         }
         item { ActionRow("🌐", "Untertitel-Sprache: $targetLabel – andere wählen …") { activity.openLanguagePicker() } }
         if (text.isEmpty()) {
+            activity.subtitleVariant?.let { variant ->
+                item { ActionRow("⇄", "Zur Variante mit Untertiteln: ${variant.name}") { activity.closeOverlay(); activity.playChannel(variant) } }
+            }
             item { MenuHint("Dieser Sender schickt gerade keine Untertitel (kein Videotext, keine DVB-Untertitel). $targetLabel gilt automatisch, sobald ein Sender welche schickt.") }
         }
     } else {
