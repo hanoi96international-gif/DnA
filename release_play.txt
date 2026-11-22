@@ -1,0 +1,22 @@
+--------- beginning of main
+--------- beginning of system
+--------- beginning of kernel
+11-22 22:25:52.128 I/DnaEngine( 4447): — Neuer Stream: 10.0.2.2 (.m3u8), live · Android 30, unknown Android SDK built for x86_64
+11-22 22:25:52.219 I/DnaEngine( 4447): Start: erstes Schlüsselbild empfangen nach 88 ms
+11-22 22:25:52.220 I/DnaEngine( 4447): Start: erste Bilddaten nach 92 ms
+11-22 22:25:52.284 I/DnaEngine( 4447): Datenrate Bild: 2.2 Mbit/s
+11-22 22:25:52.438 I/DnaEngine( 4447): Bild: video/avc 1280×720 8 Bit · Decoder-Reihenfolge: OMX.android.goldfish.h264.decoder, OMX.google.h264.decoder
+11-22 22:25:52.620 I/DnaEngine( 4447): Video: OMX.android.goldfish.h264.decoder video/avc 1280×720 8 Bit
+11-22 22:25:52.620 I/DnaEnginePlayer( 4447): DNA Engine · OMX.android.goldfish.h264.decoder
+11-22 22:25:52.621 I/DnaEngine( 4447): OMX.android.goldfish.h264.decoder: erstes Schlüsselbild hinein (22 KB, synchron)
+11-22 22:25:52.703 I/DnaEngine( 4447): OMX.android.goldfish.h264.decoder: erste Ausgabe nach 82 ms (11 Proben hinein)
+11-22 22:25:52.704 I/DnaEngine( 4447): OMX.android.goldfish.h264.decoder: erstes Bild gezeigt (150 ms vor/nach der Uhr)
+11-22 22:25:52.704 I/DnaEngine( 4447): Start: erstes Bild gezeigt nach 576 ms
+11-22 22:25:52.827 I/DnaEngine( 4447): Ton: AAC_ADTS 48000 Hz 1 Kanäle über c2.android.aac.decoder
+11-22 22:25:52.992 I/DnaEngine( 4447): Start: Ton läuft nach 863 ms
+11-22 22:25:52.994 I/DnaEngine( 4447): Bild: im Mittel -188 ms spät, gezeigt 1, verworfen 0, Decoder 100 % Echtzeit, Vorrat 135 Bilder, Display 60,0 Hz
+11-22 22:25:53.669 I/DnaEngine( 4447): Bildrate des Stroms: 24.67 → 25.0 fps
+11-22 22:25:55.467 I/DnaEngine( 4447): ⚠ OMX.android.goldfish.h264.decoder schafft nur 79 % Echtzeit – lasse Bilder ohne Bezug aus
+11-22 22:25:57.995 I/DnaEngine( 4447): Bild: im Mittel 158 ms spät, gezeigt 116, verworfen 32, ohne Bezug ausgelassen 32, Decoder 79 % Echtzeit, Vorrat 988 Bilder, Display 60,0 Hz
+11-22 22:25:59.341 I/DnaEngine( 4447): Bildrate 25.0 an die Bildfläche gemeldet
+11-22 22:26:03.022 I/DnaEngine( 4447): Bild: im Mittel -83 ms spät, gezeigt 242, verworfen 32, Decoder 100 % Echtzeit, Vorrat 1012 Bilder, Display 60,0 Hz
