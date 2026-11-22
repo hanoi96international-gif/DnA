@@ -66,13 +66,33 @@ data class VideoConfig(
                     if (i < 0 || i + 7 >= keyframe.size) return null
                     val w = ((keyframe[i + 4].toInt() and 0xFF) shl 4) or ((keyframe[i + 5].toInt() and 0xF0) shr 4)
                     val h = ((keyframe[i + 5].toInt() and 0x0F) shl 8) or (keyframe[i + 6].toInt() and 0xFF)
-                    VideoConfig(codec.mime, w, h, null, null)
+                    VideoConfig(codec.mime, w, h, null, null, interlaced = mpeg2Interlaced(keyframe, i))
                 }
                 else -> null
             }
         }
 
         private val START = byteArrayOf(0, 0, 0, 1)
+
+        /**
+         * MPEG-2 (SD-Sender, 576i): Halbbilder, wenn die Sequenz-Erweiterung nach dem Sequenzkopf ab [from]
+         * progressive_sequence = 0 meldet. Bisher galt MPEG-2 immer als Vollbild – SD-Sender liefen ohne Deinterlacing
+         * mit 25 Bildern/s (Bewegung und Laufschriften ruckelten, Kämme an Kanten). Ohne Erweiterung (MPEG-1): Vollbilder.
+         */
+        internal fun mpeg2Interlaced(data: ByteArray, from: Int = 0): Boolean {
+            var i = from
+            while (i + 5 < data.size) {
+                if (data[i].toInt() == 0 && data[i + 1].toInt() == 0 && data[i + 2].toInt() == 1) {
+                    val code = data[i + 3].toInt() and 0xFF
+                    // Sequenz-Erweiterung: Startcode B5, Kennung 1 in den oberen 4 Bit.
+                    if (code == 0xB5 && (data[i + 4].toInt() and 0xF0) shr 4 == 1) return (data[i + 5].toInt() shr 3) and 1 == 0
+                    // Erstes Bild erreicht, ohne Erweiterung: MPEG-1 bzw. keine Angabe.
+                    if (code == 0x00) return false
+                    i += 4
+                } else i++
+            }
+            return false
+        }
 
         private fun hevcType(nal: ByteArray) = (nal[0].toInt() shr 1) and 0x3F
 

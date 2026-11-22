@@ -19,6 +19,11 @@ class SubtitleCues(private val track: Track) {
         DvbSubtitleDecoder(((pages[0].toInt() and 0xFF) shl 8) or (pages[1].toInt() and 0xFF), ((pages[2].toInt() and 0xFF) shl 8) or (pages[3].toInt() and 0xFF))
     } else null
 
+    private val teletext = if (track.codec == Codec.TELETEXT) {
+        val page = track.extra?.takeIf { it.size >= 2 }?.let { ((it[0].toInt() and 0xFF) shl 8) or (it[1].toInt() and 0xFF) } ?: 0
+        TeletextDecoder(page, track.language)
+    } else null
+
     /** Einblendung aus einer Probe; bei PGS ohne Ende (die nächste beendet sie), leere PGS-Probe = Ende. */
     fun decode(sample: Sample): Entry? {
         val start = sample.timeUs
@@ -30,6 +35,8 @@ class SubtitleCues(private val track: Track) {
             Codec.TX3G -> text(start, end, String(sample.data, Charsets.UTF_8))
             Codec.PGS -> pgs?.decodeImages(sample.data)?.let { images -> Entry(start, end, images.mapNotNull { it.toCue() }) }
             Codec.DVBSUB -> dvb?.decodeImages(sample.data)?.let { images -> Entry(start, end, images.mapNotNull { it.toCue() }) }
+            // Videotext: nur wenn die Tafel neu gesendet wurde; bleibt stehen, bis die nächste kommt („" blendet aus).
+            Codec.TELETEXT -> teletext?.decode(sample.data)?.let { text(start, Long.MAX_VALUE, it) }
             else -> null
         }
     }

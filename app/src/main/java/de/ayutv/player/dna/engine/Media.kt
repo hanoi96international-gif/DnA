@@ -32,6 +32,8 @@ enum class Codec(val kind: Kind, val mime: String) {
     TX3G(Kind.TEXT, "application/x-quicktime-tx3g"),
     PGS(Kind.TEXT, "application/pgs"),
     DVBSUB(Kind.TEXT, "application/dvbsubs"),
+    /** Videotext-Untertitel (Tafel 150/777): Text, „text/…“ damit Media3 die Spur als Untertitel führt. */
+    TELETEXT(Kind.TEXT, "text/x-dna-teletext"),
     VOBSUB(Kind.TEXT, "application/vobsub"),
     ;
 

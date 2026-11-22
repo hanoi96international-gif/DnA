@@ -363,6 +363,9 @@ class PlayerActivity : ComponentActivity() {
             lifecycleScope.launch { runCatching { de.ayutv.data.net.ProxyCheck.run(container.http, de.ayutv.data.net.AppProxy.current) } }
         }
         frameRateMatcher = FrameRateMatcher(this)
+        // Gleich die Bildwiederholrate der Menüs (des zuletzt geschauten Senders) übernehmen: Ohne Vorgabe schaltete der
+        // Fernseher beim Öffnen des Players auf den Standard (60 Hz) und dann wieder auf 50 Hz – jedes Mal schwarz.
+        FrameRateMatcher.applyKept(this, enabled = true)
         frameRateMatcher.onSwitch = ::onDisplaySwitch
         frameRateMatcher.onIgnored = {
             subtitleStatus = "Der Fire TV hat nicht auf die Bildrate des Senders umgeschaltet. Fire-TV-Einstellungen → Display & Audio → " +
@@ -403,7 +406,7 @@ class PlayerActivity : ComponentActivity() {
             enhance.leveling = settings.loudnessLevel
             loudnessLevel = settings.loudnessLevel
             avSyncMs = settings.avSyncMs
-            de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = settings.avSyncMs * 1000L
+            applyAvSync()
             de.ayutv.player.dna.engine.DnaEngineCore.hdrVariant =
                 de.ayutv.player.dna.engine.HdrVariant.entries.firstOrNull { it.name == settings.hdrVariant }
             textDisabled = vod != null && !settings.subtitlesAutoOn
@@ -1044,8 +1047,10 @@ class PlayerActivity : ComponentActivity() {
         val host = de.ayutv.data.net.AppProxy.hostOf(originalUrl())
         if (!de.ayutv.data.net.AppProxy.proxies(host)) return "Weg: direkt"
         if (!settings.proxyStreams) return "Weg: direkt (Proxy nur für Listen und Anmeldung)"
-        val seen = de.ayutv.data.net.ProxyCheck.last?.proxied
-        return "Weg: über Proxy" + (seen?.let { " (${it.country} · ${it.ip})" } ?: "")
+        // Land/IP stammen aus der letzten Proxy-Prüfung, nicht aus diesem Stream: Wechselt der Proxy den Ausgang, stand hier
+        // ein alter Standort (Kurzbericht 21.11.: Wiedergabe „France“, Prüfung desselben Tages „Austria“). Deshalb mit Zeit.
+        val check = de.ayutv.data.net.ProxyCheck.last
+        return "Weg: über Proxy" + (check?.let { c -> c.proxied?.let { " (${it.country} · ${it.ip}, geprüft ${c.timeLabel()})" } } ?: "")
     }
 
     private fun retryLater() {
@@ -1168,8 +1173,17 @@ class PlayerActivity : ComponentActivity() {
 
     /** Für „Best of“: wie lange der Sender lief und wie oft dabei die Verbindung abbrach. Erst ab einer Minute. */
     private fun recordWatch() {
+        // Filme und Serien auch ins Wiedergabe-Protokoll (ab 10 s): Kurzbericht 21.11. – der Fernseher hing beim Start
+        // einer 4K-Serie, im Bericht stand davon nichts (nur Sender wurden gezählt).
+        if (!isLive) {
+            if (watchStartedAt == 0L) return
+            val watched = SystemClock.elapsedRealtime() - watchStartedAt
+            watchStartedAt = 0L
+            if (watched >= 10_000 && vodTitle.isNotBlank()) logWatch(de.ayutv.data.parse.WatchLog.VOD_PREFIX + vodTitle, watched)
+            return
+        }
         val channel = playing ?: return
-        if (!isLive || watchStartedAt == 0L) return
+        if (watchStartedAt == 0L) return
         val watched = SystemClock.elapsedRealtime() - watchStartedAt
         watchStartedAt = 0L
         // Datenrate des Senders merken (ab 20 s Schauen ist die Schätzung eingeschwungen): Bei doppelten Sendern gewinnt
@@ -1193,7 +1207,9 @@ class PlayerActivity : ComponentActivity() {
             route = routeLabel().removePrefix("Weg: "), net = watchNet, worstRssi = watchWorstRssi,
             audio = if (stats.audioCodec.isBlank()) "" else listOfNotNull(
                 stats.audioCodec, stats.audioChannels.takeIf { it > 0 }?.let { "${it}ch" },
-                if (stats.audioDecoder.isNotBlank()) "im Gerät" else "durchgereicht",
+                // Durchreichen hat auch einen Namen („Durchreichen an Receiver (AC3)“) – zählte bisher als „im Gerät“
+                // (Kurzbericht 21.11.: alle 17 Sender „Ton im Gerät dekodiert“, obwohl Dolby durchgereicht wurde).
+                if (stats.audioDecoder.isBlank() || stats.audioDecoder.startsWith("Durchreichen")) "durchgereicht" else "im Gerät",
             ).joinToString(" "),
             lastError = watchLastError,
         )
@@ -1321,6 +1337,7 @@ class PlayerActivity : ComponentActivity() {
         // Bildwiederholrate NICHT zurücksetzen: Sonst schaltet der Fernseher bei jedem Zappen zweimal
         // um (zurück auf Standard, dann wieder auf 50 Hz) und wird jedes Mal kurz schwarz.
 
+        loadSourceAvSync()
         val url = adaptLiveUrl(channel.url)
         leaveTimeshift()
         // Läuft es auf einem Fernseher, spielt das Handy nicht mit: Es ist dann die Fernbedienung, und viele Konten
@@ -1593,6 +1610,10 @@ class PlayerActivity : ComponentActivity() {
 
     private fun startVod(request: VodRequest, resumeMs: Long) {
         val p = ensureEngineFor(request.key, request.title) ?: return
+        loadSourceAvSync()
+        watchStartedAt = SystemClock.elapsedRealtime()
+        watchErrorsAtStart = playerErrors
+        resetWatchStats()
         if (castTarget == null && activeTv == null) freeConnection()
         // Neuer Film/neue Folge: auf dem Fernseher an derselben Stelle wie hier beginnen.
         castStartPositionMs = resumeMs
@@ -1683,6 +1704,42 @@ class PlayerActivity : ComponentActivity() {
     /** Genau an [to] springen (sonst springt der Film zum nächsten Schlüsselbild, bei Serien oft Sekunden daneben). */
     private fun seekExact(p: Player, to: Long) = p.seekTo(to) // die DNA Engine zeigt ohnehin genau ab der Stelle
 
+    /** Beginn der letzten Untertitel-Suche (für die Zeiten im Kurzbericht), 0 = keine. */
+    private var subtitleSearchStartedAt = 0L
+
+    /** Sender, bei dem die Untertitel schon automatisch eingeschaltet wurden (je Sender einmal, nicht bei jedem Spurwechsel). */
+    private var autoLiveSubtitlesFor: String? = null
+    private var liveSubtitlesLoggedFor: String? = null
+
+    /**
+     * Live-TV, für alle Sender: Mit „Untertitel automatisch an“ die Untertitel des Senders zeigen – in der gewünschten
+     * Sprache direkt, sonst live übersetzt (DeepL bzw. DnA-Übersetzer). Quelle sind Videotext-Untertitel (Tafel 150/777,
+     * für Hörgeschädigte) und DVB-Untertitel. Bisher blieben sie bei Sendern aus, bis man sie von Hand wählte.
+     */
+    private fun maybeAutoLiveSubtitles() {
+        val key = playing?.key ?: return
+        if (!settings.subtitlesAutoOn || !settings.liveSubtitlesAuto || castingRemote || autoLiveSubtitlesFor == key) return
+        // Kurzbericht: je Sender festhalten, ob er überhaupt Untertitel mitschickt.
+        val available = textTracks().map { (g, i) -> g.getTrackFormat(i).let { f -> listOfNotNull(f.label, f.language).joinToString(" ") } }
+        if (available.isEmpty()) {
+            if (liveSubtitlesLoggedFor != key) {
+                liveSubtitlesLoggedFor = key
+                subLog("Live ${playing?.name}: keine Untertitel-Spur im Strom (Anbieter schickt keinen Videotext/DVB-Untertitel)")
+            }
+            return
+        }
+        autoLiveSubtitlesFor = key
+        subLog("Live ${playing?.name}: Untertitel-Spuren ${available.joinToString()}")
+        val language = settings.subtitleLanguage
+        if (hasTextTrack(language)) {
+            selectTextLanguage(language)
+            subtitleStatus = "Untertitel: ${Languages.label(language)}"
+            return
+        }
+        if (!settings.translationEnabled || liveTranslateTarget == language) return
+        bestTranslationSource(allowForced = false)?.let { startLiveTranslation(language, it) }
+    }
+
     /**
      * Nur wenn "Untertitel automatisch an" eingestellt ist: Fehlt eine eingebettete Spur in der
      * bevorzugten Sprache, wird sie geladen (OpenSubtitles, sonst Übersetzung).
@@ -1758,12 +1815,15 @@ class PlayerActivity : ComponentActivity() {
             var onlineProblem: String? = null
             if (request != null) {
                 if (settings.onlineSubtitlesEnabled) subtitleStatus = "Suche Untertitel ($label) …"
+                subtitleSearchStartedAt = SystemClock.elapsedRealtime()
                 val found = runCatching {
                     container.subtitles.find(request.key, request.url, request.title, language, settings, filmInfo()) { subtitleStatus = it }
                 }.onFailure {
                     Log.w(SUBTITLE_TAG, "Suche fehlgeschlagen", it)
                     onlineProblem = describeOnlineProblem(it)
                 }.getOrNull()
+                // Für den Kurzbericht: Wie lange Suche und Download gedauert haben.
+                subLog("Suche ${if (found != null) "fertig (${found.source})" else "ohne Treffer"} nach ${SystemClock.elapsedRealtime() - subtitleSearchStartedAt} ms")
                 // Der Film hat eine eigene vollständige Spur und die gefundene Datei passt nicht nachweislich genau zu dieser
                 // Filmdatei (nur nach Titel gefunden): gleich die Spur übersetzen – sie ist immer zeitgenau, die Untertitel
                 // sind in Sekunden da. Früher wurde erst die Datei bis zu zwei Minuten lang am Film geprüft und erst dann
@@ -2950,6 +3010,9 @@ class PlayerActivity : ComponentActivity() {
         val jump = abs(timing.toVideo(here) - subtitleTiming.toVideo(here))
         if (jump < toleranceMs && subtitleAutoSynced) return
         val first = !subtitleAutoSynced || syncedBySpeech != bySpeech
+        if (!subtitleAutoSynced && subtitleSearchStartedAt > 0) {
+            subLog("Erste Ausrichtung ${if (bySpeech) "am Ton" else "an der Spur des Films"} nach ${(SystemClock.elapsedRealtime() - subtitleSearchStartedAt) / 1000} s ab Suche")
+        }
         subtitleTiming = timing
         subtitleAutoSynced = true
         syncedBySpeech = bySpeech
@@ -3211,6 +3274,16 @@ class PlayerActivity : ComponentActivity() {
         subtitleStatus = "Diese Untertitel gehören zu einem anderen Film. Suche passende …"
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
+            // Der Film hat eine eigene Untertitel-Spur (auch Bild-Untertitel zählen, nur ihre Zeiten): alle weiteren Treffer
+            // gleichzeitig laden und in einem Schritt an ihr messen – die passende steht in Sekunden fest. Bisher wurde
+            // die nächste Datei gesucht, geladen, geprüft und erst nach dem Verwerfen die übernächste (Kurzbericht 21.11.,
+            // Aquaman: drei Dateien nacheinander, 30 s bis zur passenden, die dann 89 % traf).
+            val references = embedded?.referenceStarts().orEmpty()
+            if (references.size >= SubtitleAlign.MIN_REFERENCES && language !in comparedLanguages) {
+                comparedLanguages += language
+                subLog("Vergleiche alle weiteren Dateien gleichzeitig mit der Spur des Films (${references.size} Einblendungen)")
+                if (compareCandidates(language, references, 0)) return@launch
+            }
             var problem: String? = null
             val found = runCatching { container.subtitles.find(request.key, request.url, request.title, language, settings, filmInfo()) }
                 .onFailure { Log.w(SUBTITLE_TAG, "Suche fehlgeschlagen", it); problem = describeOnlineProblem(it) }.getOrNull()
@@ -3484,6 +3557,17 @@ class PlayerActivity : ComponentActivity() {
             .build()
         textDisabled = !enabled
         if (!enabled) stopLiveTranslation()
+        // Live-TV: „Aus“ gilt für alle Sender (wie bei Filmen bleibt es aus) – sonst schaltete der nächste Sender die
+        // Untertitel automatisch wieder ein. Wieder an: eine Spur im Untertitel-Menü wählen oder in den Einstellungen.
+        if (isLive) setLiveSubtitlesAuto(enabled)
+    }
+
+    /** Live-TV: Untertitel bei Sendern automatisch (gespeichert, gilt für alle Sender). */
+    fun setLiveSubtitlesAuto(enabled: Boolean) {
+        if (settings.liveSubtitlesAuto == enabled) return
+        settings = settings.copy(liveSubtitlesAuto = enabled)
+        container.scope.launch { container.settings.update { it.copy(liveSubtitlesAuto = enabled) } }
+        if (!enabled) subtitleStatus = "Untertitel bei Sendern aus – wieder an über ☰ → Untertitel oder in den Einstellungen"
     }
 
     /** Player-Menü öffnen: Übersicht, oder gleich eine Unterseite (Untertitel-Taste → Untertitel). */
@@ -5215,16 +5299,42 @@ class PlayerActivity : ComponentActivity() {
     /** Bildrate anpassen – bei „nur Filme“ nicht im Live-TV (Beamer: kein Schwarzbild beim Umschalten). */
     private val afrActive: Boolean get() = settings.matchFrameRate && !(isLive && settings.frameRateFilmsOnly)
 
-    /** Ton-Bild-Abgleich in ms (positiv: Ton später). Wirkt sofort und gilt für dieses Gerät. */
+    /** Ton-Bild-Abgleich für das Gerät in ms (positiv: Ton später), aus den Einstellungen – gilt für alle Sender. */
     var avSyncMs by mutableStateOf(0); private set
 
-    fun shiftAvSync(deltaMs: Int) = setAvSync(avSyncMs + deltaMs)
+    /** Zusätzlicher Abgleich nur für diesen Sender bzw. Film/Serie (gemerkt, beim nächsten Mal automatisch). */
+    var sourceAvSyncMs by mutableStateOf(0); private set
 
+    /** Was gerade wirkt: Gerät + dieser Sender. */
+    val effectiveAvSyncMs: Int get() = (avSyncMs + sourceAvSyncMs).coerceIn(de.ayutv.data.AV_SYNC_MIN_MS, de.ayutv.data.AV_SYNC_MAX_MS)
+
+    /** Im Player: Abgleich für diesen Sender/Film verschieben (wird gemerkt). */
+    fun shiftAvSync(deltaMs: Int) = setSourceAvSync(sourceAvSyncMs + deltaMs)
+
+    fun setSourceAvSync(ms: Int) {
+        val value = ms.coerceIn(de.ayutv.data.AV_SYNC_MIN_MS - avSyncMs, de.ayutv.data.AV_SYNC_MAX_MS - avSyncMs)
+        sourceAvSyncMs = value
+        memoryKey()?.let { container.playerMemory.setAvSync(it, value) }
+        applyAvSync()
+    }
+
+    /** Abgleich für das ganze Gerät (Einstellungen). */
     fun setAvSync(ms: Int) {
         val value = ms.coerceIn(de.ayutv.data.AV_SYNC_MIN_MS, de.ayutv.data.AV_SYNC_MAX_MS)
         avSyncMs = value
-        de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = value * 1000L
+        applyAvSync()
         container.scope.launch { container.settings.update { it.copy(avSyncMs = value) } }
+    }
+
+    /** Beim Start jedes Senders/Films: gemerkten Abgleich dieses Senders laden und zusammen mit dem des Geräts anwenden. */
+    private fun loadSourceAvSync() {
+        sourceAvSyncMs = memoryKey()?.let { container.playerMemory.avSync(it) } ?: 0
+        applyAvSync()
+        if (effectiveAvSyncMs != 0) de.ayutv.player.dna.engine.DnaLog.i(TAG, "Ton-Bild-Abgleich: ${de.ayutv.data.avSyncLabel(effectiveAvSyncMs)} (Gerät ${avSyncMs} ms, dieser Sender ${sourceAvSyncMs} ms)")
+    }
+
+    private fun applyAvSync() {
+        de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = effectiveAvSyncMs * 1000L
     }
 
     fun chooseAudioMode(mode: AudioMode) {
@@ -5570,6 +5680,7 @@ class PlayerActivity : ComponentActivity() {
             // Spuren und Länge des Films stehen fest: Untertitel schon jetzt holen, nicht erst, wenn der Puffer voll ist
             // (bei 4K einige Sekunden später). Ob eine eingebettete Spur in der Sprache da ist, ist jetzt schon bekannt.
             if (!isLive && !tracks.isEmpty && (player?.duration ?: C.TIME_UNSET) != C.TIME_UNSET) maybeAutoSubtitles()
+            if (isLive && !tracks.isEmpty) maybeAutoLiveSubtitles()
         }
 
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
@@ -6047,11 +6158,20 @@ class PlayerActivity : ComponentActivity() {
         // Für den Fehlerbericht: was zuletzt lief und was der Player gemeldet hat.
         // Zusammenstellen hier, Schreiben abseits der Oberfläche (die Datei schreiben kostete beim Schließen Zeit).
         val sessionTitle = if (isLive) playing?.name.orEmpty() else vodTitle
-        val sessionLines = statusHistory.toList() + listOf("Engine: $engineLabel" + ((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.lastInfo?.takeIf { it.isNotEmpty() }?.let { " (zuletzt: $it)" } ?: ""), "Technik: $stats", "Abbrüche: ${dropInfo.ifEmpty { "keine" }}") +
+        // Bildrate: Hat die Anzeige sie noch nicht übernommen (Sender lief nur Sekunden), die der Engine nehmen – sonst stand
+        // „frameRate=0.0“ im Bericht, obwohl das Protokoll darunter „Bildrate des Stroms … 25 fps“ zeigte.
+        // Display: die Rate während der Wiedergabe, nicht die beim Schließen (Kurzbericht 21.11.: „Display 59.94 Hz“ neben
+        // „Display 50,0 Hz“ im Protokoll – der Fernseher hatte beim Verlassen schon zurückgeschaltet).
+        val reportStats = stats.let { s ->
+            val engineFps = dna?.streamFrameRate ?: 0f
+            if (s.frameRate <= 0f && engineFps > 0f) s.copy(frameRate = engineFps, frameRateMeasured = true) else s
+        }
+        val playbackHz = stats.displayHz.takeIf { it > 0f } ?: frameRateMatcher.currentRefreshRate()
+        val sessionLines = statusHistory.toList() + listOf("Engine: $engineLabel" + ((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.lastInfo?.takeIf { it.isNotEmpty() }?.let { " (zuletzt: $it)" } ?: ""), "Technik: $reportStats", "Abbrüche: ${dropInfo.ifEmpty { "keine" }}") +
                 // Decoder, Zähler und Zustand ausdrücklich: Im Protokoll darunter stehen sie nur am Anfang der Wiedergabe.
                 listOfNotNull((player as? de.ayutv.player.dna.engine.DnaEnginePlayer)?.let {
                     "Bild: Decoder ${it.videoDecoderName ?: "?"}, gezeigt ${it.renderedFrames}, verworfen ${it.droppedFrames}, Decoder ${it.decoderSpeedPercent} % Echtzeit, " +
-                        "Display ${frameRateMatcher.currentRefreshRate()} Hz · ${runCatching { it.engineState() }.getOrDefault("")}"
+                        "Display $playbackHz Hz · ${runCatching { it.engineState() }.getOrDefault("")}"
                 }) +
                 // Was die Engine selbst gemacht hat (Decoder, HEVC-Kopf, erstes Bild, Fehler, Neuverbinden).
                 listOf("Engine-Protokoll:") + de.ayutv.player.dna.engine.DnaEngineCore.journal().takeLast(190).map { "  $it" }
@@ -6196,13 +6316,17 @@ class PlayerActivity : ComponentActivity() {
         /** Weiter als so weit vom nächsten Anker weg gilt der Zeilen-Abgleich dort als ungeklärt. */
         private const val ELASTIC_COVER_MS = 90_000L
         /** So viele Einblendungen des Films, bevor weitere Dateien verglichen werden (Downloads sind begrenzt). */
-        private const val COMPARE_REFERENCES = 40
+        private const val COMPARE_REFERENCES = 20
         private const val SPEECH_CHECK_MS = 20_000L
         private const val SPEECH_FIRST_CHECK_MS = 2_000L
         /** So weit lädt der Player voraus, solange geladene Untertitel am Ton ausgerichtet werden (µs). */
         private const val SUBTITLE_READ_AHEAD_US = 150_000_000L
-        /** So lange auf Ton aus der Auswertung nebenbei warten, bevor der Ton im Gerät dekodiert wird (Soundbar). */
-        private const val SPEECH_PCM_FALLBACK_MS = 45_000L
+        /**
+         * So lange auf Ton aus der Auswertung nebenbei warten, bevor der Ton im Gerät dekodiert wird (Soundbar). Die
+         * Auswertung liefert, wenn sie geht, schon nach wenigen Sekunden Ton (weites Vorausladen); kommt nach 15 s nichts,
+         * kommt auch später nichts. Bisher 45 s – so lange standen die Untertitel unausgerichtet.
+         */
+        private const val SPEECH_PCM_FALLBACK_MS = 15_000L
         // Bis so weit voraus liegt nebenbei ausgewerteter Ton (weites Vorausladen während der Ausrichtung).
         private const val SPEECH_AHEAD_MS = 160_000L
 

@@ -84,7 +84,7 @@ object Diagnostics {
 
         de.ayutv.data.net.NetInfo.sample(context).let { out.append("Verbindung jetzt: ${it.label}" + (if (it.rssi < 0) ", Signal ${it.rssi} dBm" else "") + "\n") }
         de.ayutv.data.net.ProxyCheck.last?.let { r ->
-            out.append("Proxy-Prüfung: " + (r.proxied?.let { "über Proxy ${it.country}" } ?: "Proxy nicht erreichbar") +
+            out.append("Proxy-Prüfung ${r.timeLabel()}: " + (r.proxied?.let { "über Proxy ${it.country} · ${it.ip}" } ?: "Proxy nicht erreichbar") +
                 (r.direct?.let { ", direkt ${it.country}" } ?: "") + (r.error?.let { ", Fehler: $it" } ?: "") + "\n")
         }
         de.ayutv.data.net.ProxySpeedTest.last?.let { out.append(it.report()).append('\n') }
@@ -97,6 +97,18 @@ object Diagnostics {
 
         section("Oberfläche")
         out.append("Menüs: ${de.ayutv.ui.UiPerformance.summary()}\n")
+        // Anzeige: In welcher Auflösung die Menüs gezeichnet werden (Oberfläche) und was der Fernseher bekommt (Modus).
+        // Zeichnet ein Stick die Menüs in 4K, ist die Grafik schnell am Limit („Warten auf Grafik“ oben hoch).
+        runCatching {
+            val display = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+                ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            val metrics = context.resources.displayMetrics
+            val mode = display?.mode?.let { m ->
+                "${m.physicalWidth}×${m.physicalHeight} ${"%.2f".format(Locale.GERMANY, m.refreshRate)} Hz"
+            }
+            out.append("Anzeige: Oberfläche ${metrics.widthPixels}×${metrics.heightPixels} (${metrics.densityDpi} dpi)" +
+                (mode?.let { ", Fernseher $it" } ?: "") + "\n")
+        }
         // Baseline-Profil (vorkompilierte Menüs): Wirkt erst, wenn das System die App damit übersetzt hat – bei
         // installierten APKs außerhalb eines Stores meist erst nachts im Ruhezustand. Steht hier „noch nicht“, laufen
         // die Menüs bis dahin im langsameren Interpreter/JIT.
@@ -129,8 +141,8 @@ object Diagnostics {
         section("Einstellungen")
         runCatching {
             val s = container.settings.current()
-            out.append("Puffer ${s.bufferProfile}${if (s.filmDiskBuffer) " + Film-Vorrat" else ""}, Live ${s.liveFormat}, Player DNA Engine, Bildrate ${s.matchFrameRate}${if (s.frameRateFilmsOnly) " (nur Filme)" else ""}, Ton ${s.audioOutput}\n")
-            out.append("Bildrand ${s.screenMargin.label}, Ton-Bild-Abgleich ${de.ayutv.data.avSyncLabel(s.avSyncMs)}, HDR-Ausgabe ${s.hdrVariant.ifEmpty { "SDR" }}\n")
+            out.append("Puffer ${s.bufferProfile}${if (s.filmDiskBuffer) " + Film-Vorrat" else ""}, Live ${s.liveFormat}, Player DNA Engine, Bildrate ${s.matchFrameRate}${if (s.frameRateFilmsOnly) " (nur Filme)" else ""}, Halbbilder ${if (s.deinterlace) "An" else "Aus"}, Ton ${s.audioOutput}\n")
+            out.append("Bildrand ${s.screenMargin.label}, Ton-Bild-Abgleich ${de.ayutv.data.avSyncLabel(s.avSyncMs)}${container.playerMemory.avSyncCount.takeIf { it > 0 }?.let { " (eigener bei $it Sendern/Filmen)" }.orEmpty()}, HDR-Ausgabe ${s.hdrVariant.ifEmpty { "SDR" }}\n")
             out.append("Untertitel ${s.subtitleLanguage}, automatisch ${s.subtitlesAutoOn}, OpenSubtitles ${s.onlineSubtitles}" +
                 " (eigener Schlüssel ${s.openSubtitlesKey.isNotBlank()}, Konto ${s.openSubtitlesUser.isNotBlank()})\n")
             out.append("Übersetzung ${s.translationProvider}, zuletzt ${s.lastTranslationTarget.ifEmpty { "-" }}" +
@@ -138,7 +150,7 @@ object Diagnostics {
                     (de.ayutv.data.translate.DeepLTranslator.problem?.let { ", zuletzt: $it" } ?: "") else "") + "\n")
             out.append("Zeitversatz ${s.liveTimeshift} (${s.timeshiftMinutes} min), TV-Guide eigener ${s.ownGuideOnly}, frei ${s.internetGuide}, Verschiebung ${s.epgShiftHours} h\n")
             out.append("Vereine ${s.followedTeams.size}, Stichwörter ${s.alertKeywords.size}, Handy-Fernbedienung ${s.phoneRemote}\n")
-            out.append("Proxy ${s.proxyMode}" + (if (s.proxyMode != de.ayutv.data.net.ProxyMode.OFF) " ${s.proxyType}, Anmeldung ${s.proxyUser.isNotBlank()}, Playlists ${s.proxyPlaylists.size}" else "") +
+            out.append("Proxy ${s.proxyMode}" + (if (s.proxyMode != de.ayutv.data.net.ProxyMode.OFF) " ${s.proxyType}, Anmeldung ${s.proxyUser.isNotBlank()}, Videos über Proxy ${if (s.proxyStreams) "An" else "Aus"}, Playlists ${s.proxyPlaylists.size}" else "") +
                 (de.ayutv.data.net.AppProxy.lastFailure?.let { ", zuletzt: ${it.message}" } ?: "") + "\n")
         }
 
@@ -179,6 +191,16 @@ object Diagnostics {
             if (prefixes.isNotEmpty()) out.append("Einträge je Playlist-Nr.: ${prefixes.entries.joinToString { "${it.key}: ${it.value}" }}\n")
         }
 
+        // Kurzbericht: nur das Untertitel-Protokoll (Suche, Download, Ausrichtung mit Uhrzeit) – daran sieht man, wo es
+        // bei einem Film lange dauert.
+        if (short) runCatching {
+            val journal = de.ayutv.data.repo.SubtitleJournal.lines()
+            if (journal.isNotEmpty()) {
+                section("Untertitel")
+                container.subtitles.lastProblem?.let { out.append("Letztes Problem: $it\n") }
+                journal.takeLast(30).forEach { out.append("  ").append(it).append('\n') }
+            }
+        }
         if (!short) section("Untertitel")
         if (!short) runCatching {
             out.append("OpenSubtitles: ${de.ayutv.data.repo.OpenSubtitlesQuota.daily.takeIf { it > 0 }?.let { "$it Downloads am Tag" } ?: "Kontingent unbekannt"}\n")

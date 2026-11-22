@@ -84,6 +84,10 @@ object AppProxy {
         if (!c.active || host.isNullOrBlank() || isLocal(host)) return false
         val h = host.lowercase()
         if (h == c.host.trim().lowercase()) return false
+        // Untertitel und Übersetzung nie über den Proxy: Er ist für den IPTV-Anbieter da. Über ihn dauerte jede Suche,
+        // jeder Download und jede DeepL-Zeile länger, und bei Zeitüberschreitungen am Proxy (Kurzbericht 21.11.) kamen
+        // die Untertitel erst nach Minuten oder gar nicht.
+        if (isSubtitleService(h)) return false
         return when (c.mode) {
             ProxyMode.OFF -> false
             ProxyMode.ALL -> true
@@ -190,6 +194,14 @@ object AppProxy {
     }
 
     /** Heimnetz und Gerät selbst: nie über den Proxy (Handy-Fernbedienung, Übersetzung per Handy). */
+    /** OpenSubtitles (Suche, Anmeldung, Downloads) und DeepL. */
+    fun isSubtitleService(host: String): Boolean {
+        val h = host.lowercase()
+        return SUBTITLE_SERVICES.any { h == it || h.endsWith(".$it") }
+    }
+
+    private val SUBTITLE_SERVICES = listOf("opensubtitles.com", "opensubtitles.org", "deepl.com")
+
     fun isLocal(host: String): Boolean {
         val h = host.lowercase().trim('[', ']')
         if (h == "localhost" || h.endsWith(".local") || h.endsWith(".lan") || h.endsWith(".home") || h.endsWith(".fritz.box")) return true

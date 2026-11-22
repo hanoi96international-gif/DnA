@@ -14,8 +14,11 @@ import java.util.concurrent.TimeUnit
 object ProxyCheck {
     data class Seen(val ip: String, val country: String)
 
-    data class Result(val direct: Seen?, val proxied: Seen?, val error: String?) {
+    data class Result(val direct: Seen?, val proxied: Seen?, val error: String?, val atMs: Long = System.currentTimeMillis()) {
         val ok: Boolean get() = proxied != null
+
+        /** Zeitpunkt der Prüfung, z. B. „21.11. 12:52“ (der Proxy kann seinen Ausgang seitdem gewechselt haben). */
+        fun timeLabel(): String = java.text.SimpleDateFormat("dd.MM. HH:mm", java.util.Locale.GERMANY).format(java.util.Date(atMs))
 
         fun summary(): String = buildString {
             append("Direkt: ").append(direct?.let { "${it.country} · ${it.ip}" } ?: "nicht ermittelt")
