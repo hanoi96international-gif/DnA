@@ -1613,10 +1613,13 @@ class DnaEngineCore(
                     setInteger(MediaFormat.KEY_MAX_WIDTH, maxOf(config.width, 1920))
                     setInteger(MediaFormat.KEY_MAX_HEIGHT, maxOf(config.height, 1080))
                     setInteger(MediaFormat.KEY_PRIORITY, 0)
-                    // Nie gedrosselt (ein Arbeitstakt unter der Bildrate lässt 50-Bilder-Sender ruckeln): nur bei 4K mehr –
-                    // und bei Decodern, die in dieser Sitzung ohne Angabe zu langsam geliefert haben (siehe checkThrottled).
-                    if (config.width * config.height > 1920 * 1088 || synchronized(throttledDecoders) { name in throttledDecoders })
-                        setFloat(MediaFormat.KEY_OPERATING_RATE, 60f)
+                    // Immer ein Arbeitstakt deutlich über der Bildrate. Ohne Angabe takten manche Decoder genau auf die
+                    // Bildrate, die sie selbst annehmen (Fire TV, MediaTek): Kurzbericht 22.11., RTL HD 720p25 – Decoder
+                    // 99–115 % Echtzeit bei 480 Bildern Vorrat, Bild dauerhaft ~180 ms hinter dem Ton (Lippen versetzt),
+                    // jeder kleine Hänger kostete einen Ton-Halt zum Aufholen (Ruckler). Mit Spielraum holt er selbst auf.
+                    // Früher nur bei 4K – oder erst, nachdem er als gedrosselt erkannt war (siehe checkThrottled).
+                    val boosted = synchronized(throttledDecoders) { name in throttledDecoders }
+                    setFloat(MediaFormat.KEY_OPERATING_RATE, if (boosted && config.width * config.height <= 1920 * 1088) 120f else 60f)
                 }
             }
             // Versuche je Decoder: 8 Bit erst wie Media3, dann schlicht. 10 Bit erst schlicht, dann wie Media3, dann über
@@ -2015,11 +2018,15 @@ class DnaEngineCore(
                 return
             }
             val queued = synchronized(lock) { videoQueue.size }
+            // Gedrosselt: hinter der Uhr, Vorrat da – und trotzdem nicht deutlich schneller als Echtzeit. Ein freier Decoder
+            // holt mit Vorrat weit über Echtzeit auf. Früher zählte nur unter 98,5 %: Der Fire TV lieferte 99–115 % und
+            // blieb so dauerhaft ~180 ms zurück (Kurzbericht 22.11., RTL HD 720p25).
             val slow = decodeSpeed < THROTTLED_SPEED * playSpeed && lastEarlyUs < -THROTTLED_LATE_US && queued >= THROTTLED_MIN_QUEUE
             slowSamples = if (slow) slowSamples + 1 else 0
             if (slowSamples < 2 || rateBoosted) return
             rateBoosted = true
-            val rate = if (streamFrameRate > 30.5f) 120f else 60f
+            // Mehr Spielraum als der Arbeitstakt beim Einrichten (60): 120 bis Full HD, 4K bleibt bei 60.
+            val rate = if (config.width * config.height <= 1920 * 1088 || streamFrameRate > 30.5f) 120f else 60f
             val ok = runCatching {
                 codec.setParameters(android.os.Bundle().apply { putFloat(MediaFormat.KEY_OPERATING_RATE, rate) })
             }.isSuccess
@@ -3093,7 +3100,7 @@ class DnaEngineCore(
         /** Höchstens so viele Halte pro Minute (kommt das Bild dauerhaft nicht mit, hilft nur das Überspringen). */
         private const val CATCH_UP_HOLDS_PER_MINUTE = 3
         /** Gedrosselter Decoder: langsamer als das, mindestens so weit zurück (µs) und so viele Bilder im Vorrat. */
-        private const val THROTTLED_SPEED = 0.985
+        private const val THROTTLED_SPEED = 1.25
         private const val THROTTLED_LATE_US = 40_000L
         private const val THROTTLED_MIN_QUEUE = 5
         /** Decoder, die in dieser App-Sitzung ohne Arbeitstakt zu langsam geliefert haben. */
