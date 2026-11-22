@@ -60,6 +60,11 @@ class PlayerMemory(context: Context) {
     /** Wie viele Sender/Filme einen eigenen Abgleich haben (Kurzbericht). */
     val avSyncCount: Int get() = avSync.all.size
 
+    /** Alle eigenen Abgleiche je Sender/Film löschen (die Engine gleicht selbst ab). */
+    fun clearAvSync() {
+        avSync.edit().clear().apply()
+    }
+
     private val rates = context.getSharedPreferences("frame_rates", Context.MODE_PRIVATE)
 
     /**
