@@ -1,0 +1,4 @@
+Performing Streamed Install
+Success
+    legacyNativeLibraryDir=/data/app/~~IJy3tYer0fw3VDZf9ZyYHA==/de.ayutv-AUgLcc-klzPLcTw5BxkSfQ==/lib
+    primaryCpuAbi=armeabi-v7a
