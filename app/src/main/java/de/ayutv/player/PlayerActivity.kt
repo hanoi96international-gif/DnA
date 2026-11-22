@@ -2199,6 +2199,20 @@ class PlayerActivity : ComponentActivity() {
                         slowWarned = true
                         subtitleStatus = slowTranslationHint(target, lineMs)
                         subLog("Gerät zu langsam: $done Zeilen übersetzt, ${skipped.size} übersprungen, $lineMs ms pro Zeile")
+                        // Ein DeepL-Schlüssel ist gespeichert, übersetzt wird aber auf dem Gerät (Kurzbericht 22.11.: 17 s pro Zeile,
+                        // die Hälfte blieb im Original): von selbst auf DeepL wechseln und die Übersetzung neu starten.
+                        if (settings.translationProvider != de.ayutv.data.TranslationProvider.DEEPL && settings.deeplKey.isNotBlank()) {
+                            settings = settings.copy(translationProvider = de.ayutv.data.TranslationProvider.DEEPL)
+                            container.scope.launch { container.settings.update { it.copy(translationProvider = de.ayutv.data.TranslationProvider.DEEPL) } }
+                            subLog("Auf DeepL umgestellt (Schlüssel vorhanden, Gerät zu langsam)")
+                            val restart = aheadFormat
+                            val source = bestTranslationSource(allowForced = false)
+                            lifecycleScope.launch {
+                                subtitleStatus = "Gerät zu langsam – übersetze jetzt mit DeepL (Einstellungen → Untertitel & Übersetzung)"
+                                if (restart != null && source != null) startLiveTranslation(target, source)
+                            }
+                            return@launch
+                        }
                     }
                     failures = 0
                 } catch (e: kotlinx.coroutines.CancellationException) {

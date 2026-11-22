@@ -270,7 +270,13 @@ class DnaEnginePlayer(
             map.floorEntry(entry.startUs - 1)?.value?.let { previous -> if (previous.endUs == Long.MAX_VALUE) previous.endUs = entry.startUs }
             if (entry.cues.isEmpty()) {
                 map.floorEntry(entry.startUs)?.value?.let { if (it.endUs > entry.startUs) it.endUs = entry.startUs }
-            } else map[entry.startUs] = entry
+            } else {
+                map[entry.startUs] = entry
+                // Kam die Probe außer der Reihe (nach dem Spulen liest der Player Stellen erneut, deren spätere Einblendungen
+                // schon da sind): Ohne eigenes Ende endet sie an der nächsten. Sonst stand sie bis zu 30 s weiter und die
+                // folgenden Bild-Untertitel lagen übereinander (Kurzbericht 22.11., Harry Potter: zwei Zeilen ineinander).
+                if (entry.endUs == Long.MAX_VALUE) map.higherKey(entry.startUs)?.let { entry.endUs = it }
+            }
             // Begrenzt halten (lange Filme).
             while (map.size > 4000) map.pollFirstEntry()
             val format = textFormat(track)
