@@ -349,7 +349,10 @@ class DnaEngineCore(
         // Kleiner Rückstand (bis SHORT_HOLD_MAX_US): immer – eine kurze Tonpause bringt Bild und Ton sofort zusammen, auch
         // wenn der Decoder knapp unter Echtzeit liefert (Rundgang 18.11. und Fire TV 15.11.: Decoder 93–96 %, Bild
         // dauerhaft ~150 ms hinter dem Ton, laufend verworfene Bilder). Das Auslassen von Bildern ohne Bezug hält es danach.
-        val shortHold = behindUs <= SHORT_HOLD_MAX_US
+        // Nur bei einem Decoder, der fast Echtzeit schafft (gemessen): Liefert er dauerhaft deutlich weniger, käme das Bild
+        // nach jedem Halt sofort wieder zurück – der Ton setzte laufend aus, die Uhr stand (Rundgang 22.11.: Decoder 65 %,
+        // Uhr in 5 s nur 3,0 s weiter). Dort helfen nur das Auslassen von Bildern ohne Bezug und der Sprung zum Schlüsselbild.
+        val shortHold = behindUs <= SHORT_HOLD_MAX_US && decodeSpeed >= SHORT_HOLD_MIN_SPEED
         if (catchUpHold || paused || buffering || !audioStarted || behindUs > CATCH_UP_HOLD_MAX_US ||
             (!shortHold && decodeSpeed < CATCH_UP_MIN_SPEED)) return false
         val now = SystemClock.elapsedRealtime()
@@ -3109,6 +3112,8 @@ class DnaEngineCore(
         private const val CATCH_UP_MIN_SPEED = 0.97
         /** Bis zu diesem Rückstand (µs) hält der Ton auch bei knapp zu langsamem Decoder kurz an. */
         private const val SHORT_HOLD_MAX_US = 400_000L
+        /** … aber nur, wenn der Decoder gemessen mindestens so schnell liefert (Fire TV gedrosselt: 93–96 %). */
+        private const val SHORT_HOLD_MIN_SPEED = 0.9
         /** So lange (ns) dürfen ausgelassene Bilder ohne Bezug den Rückstand abbauen, bevor zum Schlüsselbild gesprungen wird. */
         private const val HURRY_BEFORE_SKIP_NS = 3_000_000_000L
         /** Früher als das wird ein Bild zurückgehalten (sonst mit Zeitpunkt an die Bildfläche gegeben). */
