@@ -89,6 +89,11 @@ class LiveTimeshift(
 
     private fun align(offset: Long) = offset - offset % TS_PACKET
 
+    // Laufende Verbindung zum Anbieter (nur auf dem Aufzeichnungs-Thread): Beginn, gelieferte Bytes, letzte Daten.
+    private var connectedAt = 0L
+    private var connectionBytes = 0L
+    private var lastDataAt = 0L
+
     private fun record() {
         var failures = 0
         val buffer = ByteArray(64 * 1024)
@@ -100,6 +105,9 @@ class LiveTimeshift(
                 val current = http.newCall(Request.Builder().url(source).apply { userAgent?.let { header("User-Agent", it) } }.build())
                 call = current
                 if (closed) break
+                connectedAt = SystemClock.elapsedRealtime()
+                connectionBytes = 0L
+                lastDataAt = connectedAt
                 current.execute().use { response ->
                     if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")
                     val input = response.body.byteStream()
@@ -117,6 +125,8 @@ class LiveTimeshift(
                             droppedAt = 0L
                         }
                         write(buffer, n)
+                        connectionBytes += n
+                        lastDataAt = SystemClock.elapsedRealtime()
                         failures = 0
                     }
                 }
@@ -125,6 +135,14 @@ class LiveTimeshift(
                 lastError = e.message ?: e.javaClass.simpleName
                 if (droppedAt == 0L) droppedAt = SystemClock.elapsedRealtime()
                 failures++
+                // Für den Kurzbericht: Lief die Verbindung (wie lange, wie viel), bevor sie verstummte? Regelmäßig wenige
+                // Sekunden Daten und dann Stille deutet auf Proxy oder Anbieter, nicht auf das WLAN.
+                if (connectionBytes > 0) {
+                    val now = SystemClock.elapsedRealtime()
+                    DnaLog.i(TAG, "Anbieter: Verbindung lieferte ${connectionBytes / 1024} KB in ${(lastDataAt - connectedAt) / 1000.0} s, " +
+                        "dann ${(now - lastDataAt) / 1000} s nichts (${if (e is java.net.SocketTimeoutException) "Zeitüberschreitung" else lastError})")
+                }
+                connectionBytes = 0L
                 runCatching { onDrop?.invoke(if (e is java.net.SocketTimeoutException) "Zeitüberschreitung (keine Daten)" else "Verbindung unterbrochen: $lastError") }
                 Log.w(TAG, "Aufzeichnung unterbrochen ($failures): $lastError")
             }

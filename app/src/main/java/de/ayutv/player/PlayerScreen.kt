@@ -1207,7 +1207,22 @@ private fun androidx.compose.foundation.lazy.LazyListScope.subtitleItems(activit
         activity.speechSyncInfo?.let { info -> item { MenuHint("Ausrichtung: $info") } }
         activity.fileTranslationInfo?.let { info -> item { MenuHint(info) } }
     }
-    if (!activity.isLive) {
+    if (activity.isLive) {
+        // Wie bei Filmen: Sprache wählen. Gilt für alle Sender – Spur in der Sprache, sonst die Untertitel des Senders
+        // (Videotext, DVB) live übersetzt.
+        val target = activity.liveSubtitleLanguage
+        val targetLabel = Languages.label(target)
+        item { MenuHeader("Sprache") }
+        if (activity.translationAvailable && liveTarget != target && activity.hasTranslatableTrack &&
+            text.none { it.selected && !activity.textDisabled && Languages.normalize(it.group.getTrackFormat(it.index).language) == Languages.normalize(target) }
+        ) {
+            item { ActionRow("文", "In $targetLabel übersetzen (${activity.translatorName})") { activity.chooseLiveLanguage(target) } }
+        }
+        item { ActionRow("🌐", "Untertitel-Sprache: $targetLabel – andere wählen …") { activity.openLanguagePicker() } }
+        if (text.isEmpty()) {
+            item { MenuHint("Dieser Sender schickt gerade keine Untertitel (kein Videotext, keine DVB-Untertitel). $targetLabel gilt automatisch, sobald ein Sender welche schickt.") }
+        }
+    } else {
         item { MenuHeader("Weitere Sprachen") }
         if (preferred !in activity.loadedLanguages && external != preferred) {
             // Wie früher: die Quelle gleich wählen – Datei von OpenSubtitles oder Übersetzung (DeepL bzw. Gerät).
@@ -1224,7 +1239,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.subtitleItems(activit
     }
     if (activity.translationAvailable && external == null && text.any { it.selected } && !activity.textDisabled) {
         if (liveTarget == null) {
-            item { OptionRow("Gewählte Spur live übersetzen: ${Languages.label(preferred)}", false) { activity.startLiveTranslation(preferred) } }
+            // Bei Sendern steht das schon oben unter „Sprache“.
+            if (!activity.isLive) item { OptionRow("Gewählte Spur live übersetzen: ${Languages.label(preferred)}", false) { activity.startLiveTranslation(preferred) } }
         } else {
             item { OptionRow("Live-Übersetzung (${Languages.label(liveTarget)}) beenden", true) { activity.stopLiveTranslation() } }
         }
@@ -1265,10 +1281,12 @@ private fun LanguagePicker(activity: PlayerActivity) {
         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 28.dp, horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        item { MenuHeader("Sprache wählen") }
+        item { MenuHeader(if (activity.isLive) "Untertitel-Sprache für Sender" else "Sprache wählen") }
         item {
             MenuHint(
-                "DnA-TV nimmt eine passende Spur oder lädt Untertitel. Gibt es keine, " +
+                if (activity.isLive) "Gilt für alle Sender: DnA-TV nimmt die Untertitel des Senders in dieser Sprache. Gibt es " +
+                    "keine, werden Videotext- bzw. DVB-Untertitel live übersetzt (${activity.translatorName})."
+                else "DnA-TV nimmt eine passende Spur oder lädt Untertitel. Gibt es keine, " +
                     "werden vorhandene Untertitel automatisch auf dem Gerät übersetzt (kostenlos, ohne Konto)."
             )
         }
@@ -1276,10 +1294,10 @@ private fun LanguagePicker(activity: PlayerActivity) {
             item {
                 OptionRow(
                     language.label,
-                    selected = false,
+                    selected = activity.isLive && language.code == activity.liveSubtitleLanguage,
                     modifier = if (index == 0) Modifier.focusRequester(firstItem) else Modifier,
-                    onLongClick = if (embeddedSelected && activity.translationAvailable) ({ activity.startLiveTranslation(language.code) }) else null,
-                ) { activity.loadSubtitles(language.code) }
+                    onLongClick = if (!activity.isLive && embeddedSelected && activity.translationAvailable) ({ activity.startLiveTranslation(language.code) }) else null,
+                ) { if (activity.isLive) activity.chooseLiveLanguage(language.code) else activity.loadSubtitles(language.code) }
             }
         }
     }

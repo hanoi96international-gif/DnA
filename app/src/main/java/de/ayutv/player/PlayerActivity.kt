@@ -405,6 +405,7 @@ class PlayerActivity : ComponentActivity() {
             enhance.mode = settings.audioMode
             enhance.leveling = settings.loudnessLevel
             loudnessLevel = settings.loudnessLevel
+            resetManualAvSyncOnce()
             avSyncMs = settings.avSyncMs
             applyAvSync()
             de.ayutv.player.dna.engine.DnaEngineCore.hdrVariant =
@@ -1730,7 +1731,7 @@ class PlayerActivity : ComponentActivity() {
         }
         autoLiveSubtitlesFor = key
         subLog("Live ${playing?.name}: Untertitel-Spuren ${available.joinToString()}")
-        val language = settings.subtitleLanguage
+        val language = liveSubtitleLanguage
         if (hasTextTrack(language)) {
             selectTextLanguage(language)
             subtitleStatus = "Untertitel: ${Languages.label(language)}"
@@ -3612,6 +3613,38 @@ class PlayerActivity : ComponentActivity() {
     }
 
     /** Live-TV: Untertitel bei Sendern automatisch (gespeichert, gilt für alle Sender). */
+    /** Untertitel-Sprache bei Sendern: im Live-Menü gewählt, sonst die allgemeine. */
+    val liveSubtitleLanguage: String
+        get() = if (::settings.isInitialized) settings.liveSubtitleLanguage.ifEmpty { settings.subtitleLanguage } else "de"
+
+    /**
+     * Live: Sprache gewählt (wie bei Filmen über „Sprache wählen“). Gilt für alle Sender: Spur in der Sprache, sonst die
+     * Untertitel des Senders (Videotext, DVB) live übersetzen. Schickt der Sender gerade keine, sobald einer welche hat.
+     */
+    fun chooseLiveLanguage(language: String) {
+        languagePicker = false
+        closeOverlay()
+        settings = settings.copy(liveSubtitleLanguage = language, liveSubtitlesAuto = true)
+        container.scope.launch { container.settings.update { it.copy(liveSubtitleLanguage = language, liveSubtitlesAuto = true) } }
+        stopLiveTranslation()
+        val label = Languages.label(language)
+        subLog("Live: Untertitel-Sprache $label gewählt")
+        when {
+            hasTextTrack(language) -> {
+                selectTextLanguage(language)
+                subtitleStatus = "Untertitel: $label (für alle Sender)"
+            }
+            !settings.translationEnabled ->
+                subtitleStatus = "Kein Untertitel in $label – Übersetzung ist in den Einstellungen aus"
+            else -> bestTranslationSource(allowForced = false)?.let {
+                startLiveTranslation(language, it)
+                subtitleStatus = "Übersetze live in $label (${translatorName}) – gilt für alle Sender"
+            } ?: run {
+                subtitleStatus = "Dieser Sender schickt gerade keine Untertitel. $label gilt für alle Sender, sobald einer welche schickt"
+            }
+        }
+    }
+
     fun setLiveSubtitlesAuto(enabled: Boolean) {
         if (settings.liveSubtitlesAuto == enabled) return
         settings = settings.copy(liveSubtitlesAuto = enabled)
@@ -5386,6 +5419,25 @@ class PlayerActivity : ComponentActivity() {
         de.ayutv.player.dna.engine.DnaEngineCore.avSyncUs = effectiveAvSyncMs * 1000L
     }
 
+    /**
+     * Einmal mit 0.61.38: von Hand eingestellten Ton-Bild-Abgleich (Gerät und je Sender) zurücksetzen. Er glich fast
+     * immer aus, dass der gedrosselte Bild-Decoder das Bild bis ~180 ms hinter den Ton fallen ließ (Kurzbericht 22.11.,
+     * 25-Bilder-Sender). Das hält die Engine jetzt selbst pünktlich; mit dem alten Wert lägen die Lippen nun daneben.
+     * Am Fernseher-Lautsprecher gleicht der Fernseher seine Bildverarbeitung selbst aus – dort ist 0 richtig.
+     */
+    private suspend fun resetManualAvSyncOnce() {
+        val migrations = getSharedPreferences("migrations", MODE_PRIVATE)
+        if (migrations.getBoolean(AV_SYNC_AUTO_KEY, false)) return
+        val sources = container.playerMemory.avSyncCount
+        if (settings.avSyncMs != 0 || sources > 0) {
+            de.ayutv.player.dna.engine.DnaLog.i(TAG, "Ton-Bild-Abgleich auf automatisch zurückgesetzt (war: Gerät ${settings.avSyncMs} ms, eigener bei $sources Sendern/Filmen)")
+            container.playerMemory.clearAvSync()
+            settings = settings.copy(avSyncMs = 0)
+            container.settings.update { it.copy(avSyncMs = 0) }
+        }
+        migrations.edit().putBoolean(AV_SYNC_AUTO_KEY, true).apply()
+    }
+
     fun chooseAudioMode(mode: AudioMode) {
         audioMode = mode
         enhance.mode = mode
@@ -6368,6 +6420,7 @@ class PlayerActivity : ComponentActivity() {
         private const val ELASTIC_COVER_MS = 90_000L
         /** So viele Einblendungen des Films, bevor weitere Dateien verglichen werden (Downloads sind begrenzt). */
         private const val COMPARE_REFERENCES = 20
+        private const val AV_SYNC_AUTO_KEY = "av_sync_auto_0_61_38"
         private const val SPEECH_CHECK_MS = 20_000L
         private const val SPEECH_FIRST_CHECK_MS = 2_000L
         /** So weit lädt der Player voraus, solange geladene Untertitel am Ton ausgerichtet werden (µs). */
