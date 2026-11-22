@@ -1719,6 +1719,7 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun maybeAutoLiveSubtitles() {
         val key = playing?.key ?: return
+        noteSubtitleVariant()
         if (!settings.subtitlesAutoOn || !settings.liveSubtitlesAuto || castingRemote || autoLiveSubtitlesFor == key) return
         // Kurzbericht: je Sender festhalten, ob er überhaupt Untertitel mitschickt.
         val available = textTracks().map { (g, i) -> g.getTrackFormat(i).let { f -> listOfNotNull(f.label, f.language).joinToString(" ") } }
@@ -2084,12 +2085,31 @@ class PlayerActivity : ComponentActivity() {
             }
             var unsaved = 0
             launch {
+                // Für den Kurzbericht: Wie spät erscheint eine Übersetzung gegenüber ihrer Einblendung? (Rückmeldung:
+                // nach einem Ruckler leicht versetzt.) Je Minute Mittel und Größtwert ins Untertitel-Protokoll.
+                var lastShown = Long.MIN_VALUE
+                var lagSum = 0L
+                var lagMax = 0L
+                var lagCount = 0
+                var lagLoggedAt = SystemClock.elapsedRealtime()
                 while (true) {
                     val store = embedded
                     if (store != null && store.hasEntries(format)) {
                         val position = player?.currentPosition ?: 0L
                         val entry = store.at(format, position)
                         val translated = entry?.let { aheadTranslations[it.startMs]?.ifEmpty { null } }
+                        if (entry != null && translated != null && entry.startMs != lastShown) {
+                            lastShown = entry.startMs
+                            val lag = (position - entry.startMs).coerceAtLeast(0)
+                            lagSum += lag
+                            lagCount++
+                            if (lag > lagMax) lagMax = lag
+                        }
+                        if (lagCount > 0 && SystemClock.elapsedRealtime() - lagLoggedAt >= 60_000) {
+                            subLog("Übersetzung erscheint im Mittel ${lagSum / lagCount} ms nach der Einblendung, höchstens $lagMax ms ($lagCount Zeilen)")
+                            lagSum = 0; lagMax = 0; lagCount = 0
+                            lagLoggedAt = SystemClock.elapsedRealtime()
+                        }
                         // Noch nicht übersetzt: das Original zeigen (Text selbst, Bild-Untertitel über den Player)
                         // statt gar nichts, solange der Übersetzer lädt oder nicht hinterherkommt. Mit DeepL kommt die
                         // Übersetzung meist binnen einer Sekunde: so lange nichts zeigen, statt Englisch und dann Deutsch.
@@ -2513,6 +2533,9 @@ class PlayerActivity : ComponentActivity() {
         manualSync = false
         seekRecheckFrom = -1L
         compareRounds = 0
+        lastComparePlayedMs = -COMPARE_ROUND_GAP_MS
+        sameTimingFiles = false
+        wrongFileChecked = false
         dropComparedAlternatives()
         externalCues = cues
         externalTexts = texts
@@ -3138,15 +3161,25 @@ class PlayerActivity : ComponentActivity() {
                 }
                 // 1,5 Minuten Gespräch und kein Takt: weitere Treffer der Suche laden und vergleichen; ist noch keine klar
                 // vorn, mit mehr Ton nach 3 und 5 Minuten noch einmal (ohne neue Downloads).
+                // Runden auch nach gespielter Zeit verteilen: Mit dem weiten Vorauslesen liegen sonst nach 10 s schon über
+                // 8 Minuten Ton vor, und alle Runden samt „falsche Datei“ fielen in derselben Sekunde (Kurzbericht 22.11.,
+                // Undisputed IV: drei Vergleiche in 8 s, dann aufgegeben – die Datei lag nur 24 s daneben).
                 val compareDue = COMPARE_ROUNDS_SECONDS.getOrNull(compareRounds)
-                if (fit == null && compareDue != null && window >= compareDue && !subtitleAutoSynced && externalTexts == null) {
+                if (fit == null && compareDue != null && window >= compareDue && !subtitleAutoSynced && externalTexts == null &&
+                    !sameTimingFiles && playedMs - lastComparePlayedMs >= COMPARE_ROUND_GAP_MS
+                ) {
                     compareRounds++
+                    lastComparePlayedMs = playedMs
                     if (tryAlternative(position)) return@launch
                 }
-                if (fit == null && window >= SPEECH_WRONG_FILE_SECONDS && !subtitleAutoSynced && externalTexts == null) {
-                    // Acht Minuten Gespräch und kein gemeinsamer Takt, auch keine andere Datei: gehört zu einem anderen Film.
-                    replaceWrongSubtitles()
-                    return@launch
+                if (fit == null && window >= SPEECH_WRONG_FILE_SECONDS && playedMs >= SPEECH_WRONG_FILE_PLAYED_MS &&
+                    !subtitleAutoSynced && externalTexts == null && !sameTimingFiles && !wrongFileChecked
+                ) {
+                    // Acht Minuten Gespräch und kein gemeinsamer Takt, auch keine andere Datei: gehört wohl zu einem anderen
+                    // Film. Gibt es keinen Ersatz mehr, wird nicht aufgegeben: weiter am Ton prüfen (Stellen mit Dialog).
+                    wrongFileChecked = true
+                    if (replaceWrongSubtitles()) return@launch
+                    subLog("Ausrichtung am Ton läuft weiter (keine andere Datei)")
                 }
             }
         }
@@ -3193,6 +3226,12 @@ class PlayerActivity : ComponentActivity() {
     private var speechStateLogged = false
 
     private var replacedSubtitles = 0
+    /** Gespielte Zeit (ms, Ausrichtung am Ton) beim letzten Vergleich weiterer Dateien. */
+    private var lastComparePlayedMs = -COMPARE_ROUND_GAP_MS
+    /** Die weiteren Dateien haben dieselbe Zeitbasis wie die geladene: Austauschen bringt nichts. */
+    private var sameTimingFiles = false
+    /** „Falsche Datei“ für die geladene Datei schon einmal entschieden. */
+    private var wrongFileChecked = false
     /** Für die geladene Datei schon so oft weitere Treffer am Ton verglichen ([COMPARE_ROUNDS_SECONDS]). */
     private var compareRounds = 0
     /** Zum Vergleich geladene weitere Dateien (bleiben für die nächste Runde, bis eine übernommen oder die Datei gewechselt wird). */
@@ -3252,6 +3291,16 @@ class PlayerActivity : ComponentActivity() {
                 // false: Die Prüfung am Ton läuft für diese Datei weiter (nachprüfen, nach dem Spulen).
                 return false
             }
+            // Alle Dateien gleich gut (Kurzbericht 22.11.: viermal Güte 3,9): Sie haben dieselbe Zeitbasis (dieselbe Vorlage
+            // neu hochgeladen). Dann ist nicht die Datei falsch, sondern der Ton reicht noch nicht – austauschen bringt
+            // nichts, weiter am Ton prüfen.
+            val others = evaluations.drop(1).filterNotNull()
+            if (current != null && others.isNotEmpty() && others.all { abs(it.z - current.z) < SAME_TIMING_Z }) {
+                if (!sameTimingFiles) subLog("Weitere Dateien haben dieselbe Zeitbasis – nicht die Datei ist falsch, prüfe weiter am Ton")
+                sameTimingFiles = true
+                dropComparedAlternatives()
+                return false
+            }
             subLog("Keine der $compared weiteren Dateien passt klar besser")
             return false
         }
@@ -3273,12 +3322,13 @@ class PlayerActivity : ComponentActivity() {
         replaceWrongSubtitles()
     }
 
-    private fun replaceWrongSubtitles() {
-        val request = vod ?: return
-        val language = externalLanguage ?: return
+    /** Andere Datei suchen; false, wenn es keinen Versuch mehr gibt (die aktuelle bleibt, die Ausrichtung läuft weiter). */
+    private fun replaceWrongSubtitles(): Boolean {
+        val request = vod ?: return false
+        val language = externalLanguage ?: return false
         if (replacedSubtitles >= 3) {
-            subtitleStatus = "Keine passenden Untertitel gefunden. Zeit im Menü unter „Untertitel-Zeit“ selbst einstellen"
-            return
+            subtitleStatus = "Keine besser passende Datei gefunden – richte weiter am Ton aus. Sonst ☰ → Untertitel-Zeit"
+            return false
         }
         replacedSubtitles++
         subLog("Untertitel $language passen nicht zum Film, suche andere")
@@ -3321,6 +3371,7 @@ class PlayerActivity : ComponentActivity() {
             subtitleStatus = problem ?: container.subtitles.lastProblem ?: "Keine passenden Untertitel in ${Languages.label(language)} gefunden" +
                 if (!settings.translationEnabled) " (Übersetzung ist in den Einstellungen aus)" else ""
         }
+        return true
     }
 
     /** Letzter Grund, warum Untertitel aus dem Internet nicht geladen werden konnten (steht im Untertitel-Menü). */
@@ -3613,6 +3664,31 @@ class PlayerActivity : ComponentActivity() {
     }
 
     /** Live-TV: Untertitel bei Sendern automatisch (gespeichert, gilt für alle Sender). */
+    private val subtitleVariants by lazy { getSharedPreferences("live_subtitle_variants", MODE_PRIVATE) }
+
+    /**
+     * Viele Anbieter lassen den Videotext (und damit die Untertitel) nur in einer Variante eines Senders im Strom, meist der
+     * SD-Variante (Rückmeldung 22.11.). Merken, welche Variante Untertitel hatte – unter dem Sendernamen ohne HD/SD/RAW/…
+     */
+    private fun noteSubtitleVariant() {
+        val channel = playing ?: return
+        if (textTracks().isEmpty()) return
+        val base = SubtitleVariants.baseName(channel.name)
+        if (base.isEmpty() || subtitleVariants.getString(base, null) == channel.key) return
+        subtitleVariants.edit().putString(base, channel.key).apply()
+        subLog("Live ${channel.name}: Variante mit Untertiteln gemerkt")
+    }
+
+    /** Live, Sender ohne Untertitel: eine Variante desselben Senders, die schon Untertitel mitgeschickt hat. */
+    val subtitleVariant: ChannelEntity?
+        get() {
+            val channel = playing ?: return null
+            if (!isLive || textTracks().isNotEmpty()) return null
+            val key = subtitleVariants.getString(SubtitleVariants.baseName(channel.name), null) ?: return null
+            if (key == channel.key) return null
+            return channels.firstOrNull { it.key == key }
+        }
+
     /** Untertitel-Sprache bei Sendern: im Live-Menü gewählt, sonst die allgemeine. */
     val liveSubtitleLanguage: String
         get() = if (::settings.isInitialized) settings.liveSubtitleLanguage.ifEmpty { settings.subtitleLanguage } else "de"
@@ -6450,6 +6526,12 @@ class PlayerActivity : ComponentActivity() {
         private const val SEEK_RECHECK_VOTES = 80
         /** So viel Ton im Fenster ohne Übereinstimmung: falsche Datei. */
         private const val SPEECH_WRONG_FILE_SECONDS = 8 * 60
+        /** … und so lange gespielt (vorausgelesener Ton zählt sonst nach Sekunden schon für Minuten). */
+        private const val SPEECH_WRONG_FILE_PLAYED_MS = 3 * 60_000L
+        /** Vergleichsrunden mindestens so weit auseinander (gespielte Zeit). */
+        private const val COMPARE_ROUND_GAP_MS = 30_000L
+        /** Güte so nah beieinander: Dateien mit derselben Zeitbasis. */
+        private const val SAME_TIMING_Z = 0.3
         /**
          * Nach so viel Gespräch ohne Takt werden weitere Treffer der Suche verglichen (erste Runde lädt, die weiteren bewerten
          * neu). Früher erst nach 90 s – die richtige Datei kam so oft erst nach Minuten; der Vergleich übernimmt nur eine
