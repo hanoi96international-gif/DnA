@@ -1837,7 +1837,7 @@ class PlayerActivity : ComponentActivity() {
                     startLiveTranslation(language, embeddedSource, preroll = true)
                     // Die Datei im Hintergrund an der Spur prüfen: Passt sie (menschlich übersetzt), wird gewechselt.
                     val cues = withContext(Dispatchers.IO) { parseCues(found.file) }
-                    if (cues.isNotEmpty()) backgroundCheck = BackgroundCheck(language, cues)
+                    if (cues.isNotEmpty()) startBackgroundCheck(BackgroundCheck(language, cues))
                     subtitleStatus = "Übersetze die Untertitel des Films (zeitgenau) – Datei von OpenSubtitles im Menü wählbar"
                     return@launch
                 }
@@ -2199,6 +2199,20 @@ class PlayerActivity : ComponentActivity() {
                         slowWarned = true
                         subtitleStatus = slowTranslationHint(target, lineMs)
                         subLog("Gerät zu langsam: $done Zeilen übersetzt, ${skipped.size} übersprungen, $lineMs ms pro Zeile")
+                        // Ein DeepL-Schlüssel ist gespeichert, übersetzt wird aber auf dem Gerät (Kurzbericht 22.11.: 17 s pro Zeile,
+                        // die Hälfte blieb im Original): von selbst auf DeepL wechseln und die Übersetzung neu starten.
+                        if (settings.translationProvider != de.ayutv.data.TranslationProvider.DEEPL && settings.deeplKey.isNotBlank()) {
+                            settings = settings.copy(translationProvider = de.ayutv.data.TranslationProvider.DEEPL)
+                            container.scope.launch { container.settings.update { it.copy(translationProvider = de.ayutv.data.TranslationProvider.DEEPL) } }
+                            subLog("Auf DeepL umgestellt (Schlüssel vorhanden, Gerät zu langsam)")
+                            val restart = aheadFormat
+                            val source = bestTranslationSource(allowForced = false)
+                            lifecycleScope.launch {
+                                subtitleStatus = "Gerät zu langsam – übersetze jetzt mit DeepL (Einstellungen → Untertitel & Übersetzung)"
+                                if (restart != null && source != null) startLiveTranslation(target, source)
+                            }
+                            return@launch
+                        }
                     }
                     failures = 0
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -3340,8 +3354,33 @@ class PlayerActivity : ComponentActivity() {
         val references = ArrayList<Long>()
         var showing = false
         var checking = false
+        /** Bei so vielen Einblendungen zuletzt geprüft. */
+        var lastChecked = 0
+        var startedAt = 0L
     }
     private var backgroundCheck: BackgroundCheck? = null
+
+    private var backgroundJob: Job? = null
+
+    /**
+     * Datei im Hintergrund prüfen: an den Einblendungen der Spur, die der Player schon vorausgelesen hat (bis 2,5 Minuten
+     * voraus), nicht erst an denen, die im Bild erscheinen. Früher stand die Entscheidung erst nach 20–60 gezeigten
+     * Einblendungen fest (1–3 Minuten Film), jetzt meist nach wenigen Sekunden.
+     */
+    private fun startBackgroundCheck(check: BackgroundCheck) {
+        backgroundCheck = check
+        check.startedAt = SystemClock.elapsedRealtime()
+        backgroundJob?.cancel()
+        backgroundJob = lifecycleScope.launch {
+            while (isActive && backgroundCheck === check) {
+                // Weit vorauslesen, solange geprüft wird: Dann liegen die Einblendungen der nächsten Minuten schon vor.
+                dna?.extraReadAheadUs = SUBTITLE_READ_AHEAD_US
+                maybeCheckBackground(check)
+                delay(1_000)
+            }
+            if (externalLanguage == null) dna?.extraReadAheadUs = 0L
+        }
+    }
 
     private fun recordBackgroundReference(cueGroup: CueGroup) {
         val check = backgroundCheck ?: return
@@ -3354,26 +3393,36 @@ class PlayerActivity : ComponentActivity() {
         val time = (cueGroup.presentationTimeUs / 1000).takeIf { cueGroup.presentationTimeUs != C.TIME_UNSET && abs(it - position) < 3_000 } ?: position
         if (check.references.isNotEmpty() && abs(check.references.last() - time) < 300) return
         check.references += time
-        val n = check.references.size
-        // Alle 10 Einblendungen ab 20 prüfen; nach 60 ohne klares Passen aufgeben (die Übersetzung bleibt).
-        if (n >= BACKGROUND_GIVE_UP) {
-            subLog("OpenSubtitles-Datei passt nach $n Einblendungen nicht klar – Übersetzung bleibt")
-            backgroundCheck = null
-            // Für diesen Film entschieden: beim nächsten Mal gleich die Übersetzung (auch wenn die Datei gespeichert ist).
-            vod?.let { container.playerMemory.setSubtitleSource(PlayerMemory.autoKey(it.key), PlayerMemory.SOURCE_TRANSLATE) }
-            return
-        }
-        if (n < DECIDE_REFERENCES || n % 10 != 0 || check.checking) return
+        maybeCheckBackground(check)
+    }
+
+    private fun maybeCheckBackground(check: BackgroundCheck) {
+        if (check.checking || backgroundCheck !== check) return
+        // Vorausgelesene Einblendungen der Spur, sonst die gezeigten.
+        val ahead = embedded?.referenceStarts().orEmpty()
+        val references = if (ahead.size >= check.references.size) ahead else check.references.toList()
+        val n = references.size
+        if (n < DECIDE_REFERENCES || n < check.lastChecked + BACKGROUND_STEP) return
+        check.lastChecked = n
         check.checking = true
-        val references = check.references.toList()
         val starts = check.cues.map { it.start }
         lifecycleScope.launch {
             val (global, result) = withContext(Dispatchers.Default) { alignTo(references, starts) }
             check.checking = false
             if (backgroundCheck !== check || liveTranslateTarget != check.language) return@launch
             val percent = result?.percent ?: 0
-            subLog("OpenSubtitles-Datei im Hintergrund: passt $percent % nach ${references.size} Einblendungen")
-            if (result == null || percent < FIT_PERCENT) return@launch
+            val seconds = (SystemClock.elapsedRealtime() - check.startedAt) / 1000
+            subLog("OpenSubtitles-Datei im Hintergrund: passt $percent % nach $n Einblendungen ($seconds s)")
+            if (result == null || percent < FIT_PERCENT) {
+                // Nach 60 Einblendungen ohne klares Passen aufgeben (die Übersetzung bleibt).
+                if (n >= BACKGROUND_GIVE_UP) {
+                    subLog("OpenSubtitles-Datei passt nach $n Einblendungen nicht klar – Übersetzung bleibt")
+                    backgroundCheck = null
+                    // Für diesen Film entschieden: beim nächsten Mal gleich die Übersetzung (auch wenn die Datei gespeichert ist).
+                    vod?.let { container.playerMemory.setSubtitleSource(PlayerMemory.autoKey(it.key), PlayerMemory.SOURCE_TRANSLATE) }
+                }
+                return@launch
+            }
             backgroundCheck = null
             stopLiveTranslation()
             beginExternal(check.language, check.cues, null)
@@ -6295,6 +6344,8 @@ class PlayerActivity : ComponentActivity() {
         private const val FIT_PERCENT = 90
         /** Hintergrundprüfung einer OpenSubtitles-Datei neben der Übersetzung: nach so vielen Einblendungen aufgeben. */
         private const val BACKGROUND_GIVE_UP = 60
+        /** Im Hintergrund nach je so vielen neuen Einblendungen wieder prüfen. */
+        private const val BACKGROUND_STEP = 5
         /** So viele Einblendungen, bevor endgültig entschieden wird (meist die ersten 20–30 s Dialog, vorausgelesen). */
         private const val DECIDE_REFERENCES = 20
         /** Darunter ist die Datei schon bei den ersten Einblendungen klar daneben. */

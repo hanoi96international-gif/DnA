@@ -255,6 +255,27 @@ class SpeechSyncTest {
     }
 
     @Test
+    fun nearOffsetNeedsLessSound() {
+        // Dateien, die nur Sekunden neben dem Film liegen (der Normalfall), stehen schon nach einer Minute Ton fest –
+        // weit über die Hälfte der Stellen; vorher mussten es meist 1,5–2 Minuten sein.
+        var found = 0
+        var total = 0
+        for (seed in listOf(3, 5, 8)) {
+            val f = film(seed, 15)
+            for (minute in listOf(1, 4, 7, 10)) {
+                for (offset in listOf(-2_400L, 1_100L, 9_000L)) {
+                    total++
+                    val fit = SpeechSync.estimate(listenSeconds(f, minute, 60).signal(), shifted(f.cues, 1.0, offset)) ?: continue
+                    assertTrue("falsche Lage ${fit.timing.offsetMs} statt $offset", abs(fit.timing.offsetMs - offset) <= 300)
+                    found++
+                }
+            }
+        }
+        println("Nahe Lage nach 60 s: $found von $total")
+        assertTrue("nur $found von $total nach einer Minute", found >= total / 2)
+    }
+
+    @Test
     fun shortSoundGivesNoWrongResult() {
         // Schon ab 45 s Ton wird ausgerichtet: Das darf nie eine falsche Lage oder die Datei eines anderen Films ergeben.
         var right = 0

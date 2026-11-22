@@ -210,10 +210,22 @@ object SpeechSync {
 
     /** [signal] aus [SpeechActivity.signal], [cues] Start/Ende der geladenen Untertitel (Dateizeit, ms). */
     fun estimate(signal: FloatArray, cues: List<Pair<Long, Long>>): SubtitleSync.Fit? {
-        val e = evaluate(signal, cues) ?: return null
+        val e = evaluate(signal, cues)
         // Eindeutig: weit über dem Rauschen und deutlich vor der zweitbesten Lösung.
-        if (e.z < MIN_Z || e.z < e.runnerUpZ * CLEAR) return null
-        return SubtitleSync.Fit(e.timing, (e.z * 10).toInt(), e.heardSeconds)
+        if (e != null && e.z >= MIN_Z && e.z >= e.runnerUpZ * CLEAR) return SubtitleSync.Fit(e.timing, (e.z * 10).toInt(), e.heardSeconds)
+        // Die meisten Dateien liegen nur Sekunden neben dem Film. Nur dort gesucht gibt es viel weniger zufällige Gipfel:
+        // Ein Treffer ist schon mit weniger Ton sicher. Gemessen (SpeechSyncTest): mit 45 s Ton ein Drittel statt keiner,
+        // mit 60 s die Hälfte statt einem Viertel ausgerichtet; Dateien anderer Filme erreichen dort höchstens 5,1.
+        val near = evaluate(signal, cues, NEAR_MS) ?: return null
+        if (near.z < NEAR_MIN_Z || near.z < near.runnerUpZ * CLEAR) return null
+        // Weiter weg steht ein ebenso deutlicher Treffer (gekürzte Fassung: zwei Abschnitte mit verschiedenem Versatz):
+        // nicht raten, das klärt der Abgleich Abschnitt für Abschnitt.
+        if (e != null && e.z >= NEAR_MIN_Z) {
+            val first = signal.indexOfFirst { !it.isNaN() }.toLong() * BIN_MS
+            val last = signal.indexOfLast { !it.isNaN() }.toLong() * BIN_MS
+            if (listOf(first, last).any { abs(e.timing.toSubtitle(it) - near.timing.toSubtitle(it)) > SAME_MS }) return null
+        }
+        return SubtitleSync.Fit(near.timing, (near.z * 10).toInt(), near.heardSeconds)
     }
 
     /**
@@ -223,9 +235,9 @@ object SpeechSync {
      */
     class Evaluation(val timing: SubtitleTiming, val z: Double, val runnerUpZ: Double, val heardSeconds: Int)
 
-    fun evaluate(signal: FloatArray, cues: List<Pair<Long, Long>>): Evaluation? {
+    fun evaluate(signal: FloatArray, cues: List<Pair<Long, Long>>, nearMs: Long = MAX_SHIFT_MS, minSeconds: Int = MIN_SECONDS): Evaluation? {
         val heard = signal.indices.filter { !signal[it].isNaN() }
-        if (heard.size < MIN_SECONDS * 10 || cues.size < 20) return null
+        if (heard.size < minSeconds * 10 || cues.size < 20) return null
         // Sprachsignal standardisieren (nur gehörte Stellen).
         val mean = heard.sumOf { signal[it].toDouble() } / heard.size
         val sd = sqrt(heard.sumOf { (signal[it] - mean) * (signal[it] - mean) } / heard.size).takeIf { it > 1e-6 } ?: return null
@@ -238,7 +250,7 @@ object SpeechSync {
         val sortedCues = cues.sortedBy { it.first }
         val first = heard.first().toLong() * BIN_MS
         val last = heard.last().toLong() * BIN_MS
-        val found = RATIOS.mapNotNull { ratio -> search(x, heard, sortedCues, ratio)?.let { Found(ratio, it.first, it.second, it.third) } }
+        val found = RATIOS.mapNotNull { ratio -> search(x, heard, sortedCues, ratio, nearMs)?.let { Found(ratio, it.first, it.second, it.third) } }
         val winner = found.maxByOrNull { it.z } ?: return null
         // Andere Lösung = andere Zuordnung irgendwo im gehörten Stück (Bildraten wie 24 und 23,976 fps
         // liegen über kurze Strecken praktisch aufeinander und sind keine Konkurrenz).
@@ -331,7 +343,7 @@ object SpeechSync {
     }
 
     /** Bester Versatz für eine Bildrate: grob in 500-ms-Schritten, dann fein in 100 ms. */
-    private fun search(x: FloatArray, heard: List<Int>, cues: List<Pair<Long, Long>>, ratio: Double): Triple<Long, Double, Double>? {
+    private fun search(x: FloatArray, heard: List<Int>, cues: List<Pair<Long, Long>>, ratio: Double, nearMs: Long): Triple<Long, Double, Double>? {
         val from = heard.first()
         val to = heard.last()
         // Untertitel als 0/1-Folge auf dem 100-ms-Raster der Datei (mit Bildrate umgerechnet in Filmzeit).
@@ -361,9 +373,11 @@ object SpeechSync {
         val scores = DoubleArray(shifts.count()) { k -> correlation(base - (shifts.first + k)) }
         val m = scores.average()
         val sd = sqrt(scores.sumOf { (it - m) * (it - m) } / scores.size).takeIf { it > 1e-9 } ?: return null
-        val top = scores.indices.maxBy { scores[it] }
+        // Gesucht wird nur in der Nähe ([nearMs]); das Rauschen (m, sd) zählt über alle Verschiebungen.
+        val near = scores.indices.filter { abs((shifts.first + it).toLong()) * COARSE * BIN_MS <= nearMs }
+        val top = near.maxByOrNull { scores[it] } ?: return null
         // Zweitbester Gipfel mindestens 3 s entfernt
-        val runner = scores.indices.filter { abs(it - top) > 6 }.maxOfOrNull { scores[it] } ?: m
+        val runner = near.filter { abs(it - top) > 6 }.maxOfOrNull { scores[it] } ?: m
         // Fein: ±1 s um den groben Treffer in 100-ms-Schritten
         val coarseShift = shifts.first + top
         var bestShift = coarseShift * COARSE
@@ -452,6 +466,10 @@ object SpeechSync {
     /** Zeile beginnt höchstens so weit neben einem Sprach-Einsatz: zählt als passend. */
     private const val MATCH_MS = 700L
     private const val MIN_Z = 6.0
+    /** Nahe Lage: bis ±30 s um die Dateizeit … */
+    private const val NEAR_MS = 30_000L
+    /** … und dort so deutlich über dem Rauschen. */
+    private const val NEAR_MIN_Z = 5.5
     /** Gemessen (SpeechSyncTest): Dateien anderer Filme erreichen bis 5,8, die richtige nach 90 s Gespräch meist über 5,7. */
     const val COMPARE_MIN_Z = 5.8
     private const val COMPARE_MARGIN = 1.3
